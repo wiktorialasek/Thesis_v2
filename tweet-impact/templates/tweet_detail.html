@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+  <a class="btn btn-link mb-3" href="{{ url_for('list_tweets') }}">&larr; Powrót</a>
+
+  <div class="card p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-start">
+      <h4 class="mb-2">Tweet</h4>
+      <span class="muted">{{ created_display }}</span>
+    </div>
+    <p class="fs-5 mb-0">{{ tweet.text }}</p>
+    <div class="mt-2 d-flex gap-2">
+      {% if tweet.isReply %}<span class="pill">reply</span>{% endif %}
+      {% if tweet.isRetweet %}<span class="pill">retweet</span>{% endif %}
+      {% if tweet.isQuote %}<span class="pill">quote</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 class="mb-0">Notowania od minuty publikacji (15 min)</h5>
+    </div>
+    <div id="chart" style="height:420px;"></div>
+    <small class="muted">OHLC minutowe • okno 15 min od publikacji</small>
+  </div>
+
+  <script>
+    window.APP_CONFIG = { startUnix: { created_ts }, minutes: 15 };
+    renderChartFromConfig();
+  </script>
+{% endblock %}
