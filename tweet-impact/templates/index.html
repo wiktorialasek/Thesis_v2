@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <!-- LEWA KOLUMNA: filtry + lista -->
+  <div class="card pane">
+    <div style="margin-bottom:10px"><strong>Filtry</strong></div>
+
+    <div class="filters">
+      <div>
+        <label>Rok</label>
+        <select id="f-year">
+          <option value="all">Wszystkie</option>
+        </select>
+      </div>
+      <div>
+        <label>Szukaj w tekście</label>
+        <input id="f-q" type="text" placeholder="fraza..." />
+      </div>
+    </div>
+
+    <div class="checks" style="margin-bottom:10px">
+      <label class="check"><input id="f-reply" type="checkbox" /> tylko reply</label>
+      <label class="check"><input id="f-retweet" type="checkbox" /> tylko retweet</label>
+      <label class="check"><input id="f-quote" type="checkbox" /> tylko quote</label>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:10px">
+      <button id="btn-apply" class="btn primary">Zastosuj</button>
+      <button id="btn-clear" class="btn">Wyczyść</button>
+    </div>
+
+    <div id="list" class="list" aria-live="polite">
+      <!-- wypełni JS -->
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:10px">
+      <button id="prev" class="btn" type="button">&larr; Poprzednie</button>
+      <span id="pagestat" class="muted" style="align-self:center">—</span>
+      <button id="next" class="btn" type="button">Następne &rarr;</button>
+    </div>
+  </div>
+
+  <!-- PRAWA KOLUMNA: szczegóły + wykres + tekst -->
+  <div class="card pane">
+    <div id="detail">
+      <div class="muted">Wybierz tweet z lewej listy…</div>
+    </div>
+
+    <div id="chart" class="card" style="margin-top:12px"></div>
+
+    <div class="card" style="margin-top:12px;padding:12px">
+      <h4 style="margin:0 0 6px">Lista minut (tekst)</h4>
+      <pre id="minute-list">—</pre>
+    </div>
+  </div>
+</div>
+
+<!-- initial id przekazany z serwera (jeśli jest)
+<script>
+  window.INITIAL_TWEET_ID = {{ (initial_id or 'null')|tojson }};
+</script> -->
+{% endblock %}
+

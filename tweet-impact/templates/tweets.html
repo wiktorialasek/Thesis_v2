@@ -1,34 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
-  {% if not tweets %}
-    <div class="alert alert-light border">Brak tweetów do wyświetlenia.</div>
-  {% endif %}
-
-  <div class="row g-3">
-    {% for t in tweets %}
-      <div class="col-12">
-        <div class="card p-3">
-          <div class="d-flex justify-content-between">
-            <h5 class="mb-1">{{ t.text[:140] }}{% if t.text|length > 140 %}…{% endif %}</h5>
-            <span class="muted">{{ t.created_at_display }}</span>
-          </div>
-          <div class="d-flex align-items-center gap-2">
-            {% if t.isReply %}<span class="pill">reply</span>{% endif %}
-            {% if t.isRetweet %}<span class="pill">retweet</span>{% endif %}
-            {% if t.isQuote %}<span class="pill">quote</span>{% endif %}
-            <a class="btn btn-sm btn-dark ms-auto" href="{{ url_for('tweet_detail', tweet_id=t.tweet_id) }}">Otwórz</a>
-          </div>
-        </div>
-      </div>
-    {% endfor %}
-  </div>
-
-  <div class="d-flex justify-content-between mt-4">
+  <div style="margin-bottom:12px">
     {% if has_prev %}
-      <a class="btn btn-outline-dark" href="{{ url_for('list_tweets', page=page-1) }}">&larr; Wstecz</a>
-    {% else %}<span></span>{% endif %}
+      <a class="btn btn-link" href="{{ url_for('list_tweets', page=page-1) }}">&larr; Poprzednie</a>
+    {% endif %}
     {% if has_next %}
-      <a class="btn btn-dark" href="{{ url_for('list_tweets', page=page+1) }}">Dalej &rarr;</a>
+      <a class="btn btn-link" style="margin-left:8px" href="{{ url_for('list_tweets', page=page+1) }}">Następne &rarr;</a>
     {% endif %}
   </div>
+
+  {% for t in tweets %}
+    <div class="card mb-3">
+      <div class="d-flex justify-content-between align-items-center">
+        <h4 class="mb-2">
+          <a href="{{ url_for('tweet_detail', tweet_id=t.tweet_id) }}">Tweet #{{ t.tweet_id }}</a>
+        </h4>
+        <span class="muted">{{ t.created_at_display }}</span>
+      </div>
+      <p class="mb-0">{{ t.text }}</p>
+      <div class="mt-2 d-flex gap-2">
+        {% if t.isReply %}<span class="pill">reply</span>{% endif %}
+        {% if t.isRetweet %}<span class="pill">retweet</span>{% endif %}
+        {% if t.isQuote %}<span class="pill">quote</span>{% endif %}
+      </div>
+    </div>
+  {% endfor %}
 {% endblock %}

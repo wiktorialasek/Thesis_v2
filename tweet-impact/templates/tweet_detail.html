@@ -23,8 +23,20 @@
     <small class="muted">OHLC minutowe • okno 15 min od publikacji</small>
   </div>
 
+  <div class="card p-3 mt-3">
+    <h6 class="mb-2">Lista minut (tekst)</h6>
+    <pre id="minute-list" class="mb-0" style="white-space:pre-wrap;"></pre>
+  </div>
+
   <script>
-    window.APP_CONFIG = { startUnix: { created_ts }, minutes: 15 };
-    renderChartFromConfig();
+    // KLUCZOWE: muszą być podwójne klamry!
+    window.APP_CONFIG = { startUnix: {{ created_ts }}, minutes: 15 };
+    document.addEventListener('DOMContentLoaded', () => {
+      renderChartFromConfig();
+      fetch(`/api/price?start=${window.APP_CONFIG.startUnix}&minutes=${window.APP_CONFIG.minutes}&format=text`)
+        .then(r => r.text())
+        .then(t => { document.getElementById('minute-list').textContent = t; })
+        .catch(() => { document.getElementById('minute-list').textContent = 'Błąd ładowania listy minut.'; });
+    });
   </script>
 {% endblock %}
