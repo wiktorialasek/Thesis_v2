@@ -19,9 +19,9 @@
     </div>
 
     <div class="checks" style="margin-bottom:10px">
-      <label class="check"><input id="f-reply" type="checkbox" /> tylko reply</label>
-      <label class="check"><input id="f-retweet" type="checkbox" /> tylko retweet</label>
-      <label class="check"><input id="f-quote" type="checkbox" /> tylko quote</label>
+      <label class="check"><input id="f-reply" type="checkbox" /> bez reply</label>
+      <label class="check"><input id="f-retweet" type="checkbox" /> bez retweet</label>
+      <label class="check"><input id="f-quote" type="checkbox" /> bez quote</label>
     </div>
 
     <div style="display:flex; gap:8px; margin-bottom:10px">
@@ -46,10 +46,23 @@
       <div class="muted">Wybierz tweet z lewej listy…</div>
     </div>
 
+        <!-- Panel: zakres wykresu -->
+    <div class="card" style="margin-top:12px;padding:8px;display:flex;gap:8px;align-items:center">
+      <label for="win-min" class="muted" style="min-width:120px">Zakres wykresu:</label>
+      <select id="win-min">
+        <option value="5">5 min</option>
+        <option value="10">10 min</option>
+        <option value="15" selected>15 min</option>
+        <option value="30">30 min</option>
+        <option value="60">60 min</option>
+      </select>
+      <button id="win-apply" class="btn">Zastosuj</button>
+    </div>
+
     <div id="chart" class="card" style="margin-top:12px"></div>
 
     <div class="card" style="margin-top:12px;padding:12px">
-      <h4 style="margin:0 0 6px">Lista minut (tekst)</h4>
+      <h4 style="margin:0 0 6px">Zmiana ceny względem chwili tweeta</h4>
       <pre id="minute-list">—</pre>
     </div>
   </div>

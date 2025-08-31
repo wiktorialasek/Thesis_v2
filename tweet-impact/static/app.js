@@ -21,7 +21,10 @@ function toLocal(tsSec){ return new Date(tsSec * 1000); }
 const state = {
   page: 1, per_page: 20,
   year: 'all', reply: 0, retweet: 0, quote: 0, q: '',
-  total: 0, years: []
+  total: 0, years: [],
+  windowMinutes: 15,           // << nowy stan: długość okna wykresu
+  currentTweetId: null         // << zapamiętanie otwartego tweeta
+
 };
 
 // ===== RENDER: list & filters =====
@@ -107,20 +110,35 @@ async function openDetail(tweetId){
         <div class="muted">Tweet #${t.tweet_id}</div>
       </div>
     `;
+     // >>> [NOWE] zapamiętujemy bieżącego tweeta
+    state.currentTweetId = tweetId;
 
-    // chart
-    await renderChart(t.created_ts, 15);
+    // >>> [NOWE] wykres z aktualnym oknem (state.windowMinutes)
+    const payload = await renderChart(t.created_ts, state.windowMinutes);
 
-    // minute list (text)
-    const u = '/api/price?' + new URLSearchParams({start:String(t.created_ts), minutes:'15', format:'text'}).toString();
-    const txt = await fetch(u).then(r=>r.text());
-    minuteList.textContent = txt;
-  }catch(e){
+    // >>> [NOWE] % zmiany względem chwili tweeta
+    renderPctList(payload.pct_changes);
+
+  } catch(e) {
     console.error(e);
     detail.innerHTML = '<div class="muted">Błąd wczytywania tweeta.</div>';
     Plotly.newPlot('chart', [{x:[new Date()], y:[null]}], {title:'Błąd ładowania danych', margin:{t:40}});
   }
+
+  //   // chart
+  //   await renderChart(t.created_ts, 15);
+
+  //   // minute list (text)
+  //   const u = '/api/price?' + new URLSearchParams({start:String(t.created_ts), minutes:'15', format:'text'}).toString();
+  //   const txt = await fetch(u).then(r=>r.text());
+  //   minuteList.textContent = txt;
+  // }catch(e){
+  //   console.error(e);
+  //   detail.innerHTML = '<div class="muted">Błąd wczytywania tweeta.</div>';
+  //   Plotly.newPlot('chart', [{x:[new Date()], y:[null]}], {title:'Błąd ładowania danych', margin:{t:40}});
+  // }
 }
+
 
 async function renderChart(startUnix, minutes){
   const payload = await apiPrice(startUnix, minutes);
@@ -132,15 +150,15 @@ async function renderChart(startUnix, minutes){
     const msg = document.createElement('div');
     msg.className = 'muted';
     msg.style.margin = '6px 0';
-    msg.textContent = 'Brak notowań w chwili tweeta (poza sesją). Pokazuję najbliższe 15 min od: '
-      + toLocal(usedStart).toLocaleString();
+    msg.textContent = 'Brak notowań w chwili tweeta (poza sesją). Pokazuję najbliższe '
+      + String(minutes) + ' min od: ' + toLocal(usedStart).toLocaleString();
     document.getElementById('detail').appendChild(msg);
   }
   if(!pts.length){
     Plotly.newPlot('chart', [{
       x:[toLocal(startUnix)], y:[null], mode:'lines', name:'brak danych'
     }], { title: 'Brak danych w tym oknie', margin:{t:40} }, {responsive:true});
-    return;
+    return payload;
   }
 
   const x = pts.map(p=>toLocal(p.t));
@@ -161,7 +179,63 @@ async function renderChart(startUnix, minutes){
     showlegend:false
   };
   Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
+
+  return payload;
 }
+
+function renderPctList(pct){
+  const minuteList = document.getElementById('minute-list');
+  if(!pct){ minuteList.textContent = 'Brak danych.'; return; }
+  const order = [1,2,3,4,5,6,7,8,9,10,15,30,60];
+  const lines = order.map(m=>{
+    const v = pct[m];
+    return (v === null || v === undefined)
+      ? `+${m} min: — brak danych`
+      : `+${m} min: ${v.toFixed(2)}%`;
+  });
+  minuteList.textContent = lines.join('\n');
+}
+
+// async function renderChart(startUnix, minutes){
+//   const payload = await apiPrice(startUnix, minutes);
+//   const pts = payload.points || [];
+//   const reason = payload.reason || 'ok';
+//   const usedStart = payload.used_start || startUnix;
+
+//   if(reason === 'fallback_next'){
+//     const msg = document.createElement('div');
+//     msg.className = 'muted';
+//     msg.style.margin = '6px 0';
+//     msg.textContent = 'Brak notowań w chwili tweeta (poza sesją). Pokazuję najbliższe 15 min od: '
+//       + toLocal(usedStart).toLocaleString();
+//     document.getElementById('detail').appendChild(msg);
+//   }
+//   if(!pts.length){
+//     Plotly.newPlot('chart', [{
+//       x:[toLocal(startUnix)], y:[null], mode:'lines', name:'brak danych'
+//     }], { title: 'Brak danych w tym oknie', margin:{t:40} }, {responsive:true});
+//     return;
+//   }
+
+//   const x = pts.map(p=>toLocal(p.t));
+//   const ohlcTrace = {
+//     type:'candlestick',
+//     x,
+//     open:pts.map(p=>p.open),
+//     high:pts.map(p=>p.high),
+//     low: pts.map(p=>p.low),
+//     close:pts.map(p=>p.close),
+//     name:'OHLC'
+//   };
+//   const lineTrace = { x, y: pts.map(p=>p.close), mode:'lines', name:'Close' };
+//   const layout = {
+//     margin:{l:40,r:20,t:30,b:40},
+//     xaxis:{title:'Time [HH:MM:SS}'},
+//     yaxis:{title:'Quote'},
+//     showlegend:false
+//   };
+//   Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
+// }
 
 // ===== utils =====
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
@@ -175,9 +249,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('btn-apply').addEventListener('click', ()=>{
     state.year = document.getElementById('f-year').value || 'all';
     state.q = document.getElementById('f-q').value.trim();
-    state.reply   = document.getElementById('f-reply').checked ? 1 : 0;
-    state.retweet = document.getElementById('f-retweet').checked ? 1 : 0;
-    state.quote   = document.getElementById('f-quote').checked ? 1 : 0;
+    state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
+    state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
+    state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
     state.page = 1;
     loadFiltersAndList(false);
   });
@@ -191,135 +265,29 @@ window.addEventListener('DOMContentLoaded', ()=>{
     loadFiltersAndList(false);
   });
 
+  // >>> [NOWE] panel zakresu wykresu
+  const sel = document.getElementById('win-min');
+  const btn = document.getElementById('win-apply');
+
+  if (sel && btn) {
+    btn.addEventListener('click', async ()=>{
+      const v = parseInt(sel.value || '15', 10);
+      state.windowMinutes = (isNaN(v) ? 15 : v);
+
+      if (state.currentTweetId) {
+        try {
+          const t = await apiTweet(state.currentTweetId);
+          const payload = await renderChart(t.created_ts, state.windowMinutes);
+          renderPctList(payload.pct_changes);
+        } catch(e) {
+          console.error(e);
+        }
+      }
+    });
+  }
+
   // initial load
   loadFiltersAndList(true);
 });
 
-
-
-// async function fetchWindow(startUnix, minutes) {
-//   const params = new URLSearchParams({ start: String(startUnix), minutes: String(minutes) });
-//   const res = await fetch(`/api/price?${params.toString()}`);
-//   if (!res.ok) throw new Error('API error');
-//   return res.json();
-// }
-// function toLocal(tsSec){ return new Date(tsSec * 1000); }
-
-// async function renderChartFromConfig() {
-//   if (!window.APP_CONFIG) return;
-//   const { startUnix, minutes } = window.APP_CONFIG;
-
-//   try {
-//     const payload = await fetchWindow(startUnix, minutes);
-//     const pts = payload.points || [];
-//     const reason = payload.reason || "ok";
-//     const usedStart = payload.used_start || startUnix;
-
-//     const chartEl = document.getElementById('chart');
-//     if (!chartEl) return;
-
-//     if (reason === "fallback_next") {
-//       const msg = document.createElement('div');
-//       msg.className = 'muted mb-2';
-//       msg.textContent = 'Brak notowań w czasie tweeta (poza sesją). Pokazuję najbliższe dostępne 15 min od: '
-//                         + toLocal(usedStart).toLocaleString();
-//       chartEl.parentElement.insertBefore(msg, chartEl);
-//     } else if (!pts.length) {
-//       Plotly.newPlot('chart', [{
-//         x: [toLocal(startUnix)], y: [null], mode: 'lines', name: 'brak danych'
-//       }], { title: 'Brak danych w tym oknie (poza sesją?)', margin:{t:40} });
-//       return;
-//     }
-
-//     const x = pts.map(p => toLocal(p.t));
-//     const ohlcTrace = {
-//       type: 'candlestick',
-//       x,
-//       open: pts.map(p => p.open),
-//       high: pts.map(p => p.high),
-//       low:  pts.map(p => p.low),
-//       close: pts.map(p => p.close),
-//       name: 'OHLC'
-//     };
-//     const lineTrace = { x, y: pts.map(p => p.close), mode: 'lines', name: 'Close' };
-
-//     const layout = {
-//       margin: { l:40, r:20, t:30, b:40 },
-//       xaxis: { title:'Czas (lokalny)' },
-//       yaxis: { title:'Cena' },
-//       showlegend: false
-//     };
-//     Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
-//   } catch(e) {
-//     console.error(e);
-//     Plotly.newPlot('chart', [{
-//       x:[toLocal(startUnix)], y:[null], mode:'lines', name:'błąd'
-//     }], { title: 'Błąd ładowania danych', margin:{t:40} });
-//   }
-// }
-
-
-
-
-
-// async function fetchWindow(startUnix, minutes) {
-//   const params = new URLSearchParams({ start: String(startUnix), minutes: String(minutes) });
-//   const res = await fetch(`/api/price?${params.toString()}`);
-//   if (!res.ok) throw new Error('API error');
-//   return res.json();
-// }
-// function toLocal(tsSec){ return new Date(tsSec * 1000); }
-
-// async function renderChartFromConfig() {
-//   if (!window.APP_CONFIG) return;
-//   const { startUnix, minutes } = window.APP_CONFIG;
-
-//   try {
-//     const payload = await fetchWindow(startUnix, minutes);
-//     const pts = payload.points || [];
-//     const reason = payload.reason || "ok";
-//     const usedStart = payload.used_start || startUnix;
-
-//     // komunikat nad wykresem (fallback/poza sesją)
-//     const chartEl = document.getElementById('chart');
-//     if (reason === "fallback_next") {
-//       const msg = document.createElement('div');
-//       msg.className = 'text-muted mb-2';
-//       msg.textContent = 'Brak notowań w czasie tweeta (poza sesją). Pokazuję najbliższe dostępne 15 min od: ' + toLocal(usedStart).toLocaleString();
-//       chartEl.parentElement.insertBefore(msg, chartEl);
-//     } else if (!pts.length) {
-//       Plotly.newPlot('chart', [{
-//         x: [toLocal(startUnix)], y: [null], mode: 'lines', name: 'brak danych'
-//       }], { title: 'Brak danych w tym oknie (poza sesją?)', margin:{t:40} });
-//       return;
-//     }
-
-//     const x = pts.map(p => toLocal(p.t));
-//     const close = pts.map(p => p.close);
-
-//     const ohlcTrace = {
-//       type: 'candlestick',
-//       x,
-//       open: pts.map(p => p.open),
-//       high: pts.map(p => p.high),
-//       low:  pts.map(p => p.low),
-//       close: close,
-//       name: 'OHLC'
-//     };
-//     const lineTrace = { x, y: close, mode: 'lines', name: 'Close' };
-
-//     const layout = {
-//       margin: { l:40, r:20, t:30, b:40 },
-//       xaxis: { title:'Czas (lokalny)' },
-//       yaxis: { title:'Cena' },
-//       showlegend: false
-//     };
-//     Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
-//   } catch(e) {
-//     console.error(e);
-//     Plotly.newPlot('chart', [{
-//       x:[toLocal(startUnix)], y:[null], mode:'lines', name:'błąd'
-//     }], { title: 'Błąd ładowania danych', margin:{t:40} });
-//   }
-// }
 
