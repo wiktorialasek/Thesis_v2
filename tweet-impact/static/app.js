@@ -10,11 +10,19 @@ async function apiTweet(id){
   if(!r.ok) throw new Error('tweet api');
   return r.json();
 }
-async function apiPrice(startUnix, minutes){
-  const r = await fetch('/api/price?' + new URLSearchParams({start:String(startUnix), minutes:String(minutes)}));
+async function apiPrice(startUnix, minutes, pre){
+  const r = await fetch('/api/price?' + new URLSearchParams({
+    start:String(startUnix), minutes:String(minutes), pre:String(pre||0)
+  }));
   if(!r.ok) throw new Error('price api');
   return r.json();
 }
+
+// async function apiPrice(startUnix, minutes){
+//   const r = await fetch('/api/price?' + new URLSearchParams({start:String(startUnix), minutes:String(minutes)}));
+//   if(!r.ok) throw new Error('price api');
+//   return r.json();
+// }
 function toLocal(tsSec){ return new Date(tsSec * 1000); }
 
 // ===== UI state =====
@@ -23,8 +31,8 @@ const state = {
   year: 'all', reply: 0, retweet: 0, quote: 0, q: '',
   total: 0, years: [],
   windowMinutes: 15,           // << nowy stan: długość okna wykresu
-  currentTweetId: null         // << zapamiętanie otwartego tweeta
-
+  currentTweetId: null,         // << zapamiętanie otwartego tweeta
+  preMinutes: 0  // 0 lub 10
 };
 
 // ===== RENDER: list & filters =====
@@ -114,7 +122,7 @@ async function openDetail(tweetId){
     state.currentTweetId = tweetId;
 
     // >>> [NOWE] wykres z aktualnym oknem (state.windowMinutes)
-    const payload = await renderChart(t.created_ts, state.windowMinutes);
+    const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
 
     // >>> [NOWE] % zmiany względem chwili tweeta
     renderPctList(payload.pct_changes);
@@ -139,32 +147,35 @@ async function openDetail(tweetId){
   // }
 }
 
-
-async function renderChart(startUnix, minutes){
-  const payload = await apiPrice(startUnix, minutes);
+async function renderChart(startUnix, minutes, pre){
+  const payload = await apiPrice(startUnix, minutes, pre);
   const pts = payload.points || [];
   const reason = payload.reason || 'ok';
-  const usedStart = payload.used_start || startUnix;
 
-  if(reason === 'fallback_next'){
-    const msg = document.createElement('div');
-    msg.className = 'muted';
-    msg.style.margin = '6px 0';
-    msg.textContent = 'Brak notowań w chwili tweeta (poza sesją). Pokazuję najbliższe '
-      + String(minutes) + ' min od: ' + toLocal(usedStart).toLocaleString();
-    document.getElementById('detail').appendChild(msg);
-  }
+  // Dane czasu do zakresu X:
+  const xStart = payload.x_start ? new Date(payload.x_start * 1000) : toLocal(startUnix - (pre||0)*60);
+  const xEnd   = payload.x_end   ? new Date(payload.x_end   * 1000) : toLocal(startUnix + minutes*60);
+  const tweetX = toLocal(startUnix);
+
   if(!pts.length){
     Plotly.newPlot('chart', [{
-      x:[toLocal(startUnix)], y:[null], mode:'lines', name:'brak danych'
-    }], { title: 'Brak danych w tym oknie', margin:{t:40} }, {responsive:true});
+      x:[tweetX], y:[null], mode:'lines', name:'brak danych'
+    }], {
+      title: (reason==='no_data' ? 'Brak danych w tym oknie' : ''),
+      margin:{t:30},
+      xaxis:{range:[xStart, xEnd], title:'Czas (lokalny)'},
+      yaxis:{title:'Cena'},
+      shapes: [{
+        type:'line', x0:tweetX, x1:tweetX, y0:0, y1:1, xref:'x', yref:'paper',
+        line:{dash:'dot', width:2}
+      }]
+    }, {responsive:true});
     return payload;
   }
 
   const x = pts.map(p=>toLocal(p.t));
   const ohlcTrace = {
-    type:'candlestick',
-    x,
+    type:'candlestick', x,
     open:pts.map(p=>p.open),
     high:pts.map(p=>p.high),
     low: pts.map(p=>p.low),
@@ -172,16 +183,65 @@ async function renderChart(startUnix, minutes){
     name:'OHLC'
   };
   const lineTrace = { x, y: pts.map(p=>p.close), mode:'lines', name:'Close' };
+
   const layout = {
     margin:{l:40,r:20,t:30,b:40},
-    xaxis:{title:'Czas (lokalny)'},
+    xaxis:{title:'Czas (lokalny)', range:[xStart, xEnd]},
     yaxis:{title:'Cena'},
-    showlegend:false
+    showlegend:false,
+    // pionowa linia w chwili tweeta:
+    shapes: [{
+      type:'line', x0:tweetX, x1:tweetX, y0:0, y1:1, xref:'x', yref:'paper',
+      line:{dash:'dot', width:2}
+    }]
   };
-  Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
 
+  Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
   return payload;
 }
+
+// async function renderChart(startUnix, minutes){
+//   const payload = await apiPrice(startUnix, minutes);
+//   const pts = payload.points || [];
+//   const reason = payload.reason || 'ok';
+//   const usedStart = payload.used_start || startUnix;
+
+//   if(reason === 'fallback_next'){
+//     const msg = document.createElement('div');
+//     msg.className = 'muted';
+//     msg.style.margin = '6px 0';
+//     msg.textContent = 'Brak notowań w chwili tweeta (poza sesją). Pokazuję najbliższe '
+//       + String(minutes) + ' min od: ' + toLocal(usedStart).toLocaleString();
+//     document.getElementById('detail').appendChild(msg);
+//   }
+//   if(!pts.length){
+//     Plotly.newPlot('chart', [{
+//       x:[toLocal(startUnix)], y:[null], mode:'lines', name:'brak danych'
+//     }], { title: 'Brak danych w tym oknie', margin:{t:40} }, {responsive:true});
+//     return payload;
+//   }
+
+//   const x = pts.map(p=>toLocal(p.t));
+//   const ohlcTrace = {
+//     type:'candlestick',
+//     x,
+//     open:pts.map(p=>p.open),
+//     high:pts.map(p=>p.high),
+//     low: pts.map(p=>p.low),
+//     close:pts.map(p=>p.close),
+//     name:'OHLC'
+//   };
+//   const lineTrace = { x, y: pts.map(p=>p.close), mode:'lines', name:'Close' };
+//   const layout = {
+//     margin:{l:40,r:20,t:30,b:40},
+//     xaxis:{title:'Czas (lokalny)'},
+//     yaxis:{title:'Cena'},
+//     showlegend:false
+//   };
+//   Plotly.newPlot('chart', [ohlcTrace, lineTrace], layout, {responsive:true});
+
+//   return payload;
+// }
 
 function renderPctList(pct){
   const minuteList = document.getElementById('minute-list');
@@ -240,21 +300,31 @@ function renderPctList(pct){
 // ===== utils =====
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
+
 // ===== wiring =====
 window.addEventListener('DOMContentLoaded', ()=>{
-  // buttons
-  document.getElementById('prev').addEventListener('click', ()=>{ state.page=Math.max(1,state.page-1); loadFiltersAndList(false); });
-  document.getElementById('next').addEventListener('click', ()=>{ state.page=state.page+1; loadFiltersAndList(false); });
 
+  // --- nawigacja listy ---
+  document.getElementById('prev').addEventListener('click', ()=>{
+    state.page = Math.max(1, state.page - 1);
+    loadFiltersAndList(false);
+  });
+  document.getElementById('next').addEventListener('click', ()=>{
+    state.page = state.page + 1;
+    loadFiltersAndList(false);
+  });
+
+  // --- filtry po lewej ---
   document.getElementById('btn-apply').addEventListener('click', ()=>{
-    state.year = document.getElementById('f-year').value || 'all';
-    state.q = document.getElementById('f-q').value.trim();
+    state.year   = document.getElementById('f-year').value || 'all';
+    state.q      = (document.getElementById('f-q').value || '').trim();
     state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
     state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
     state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
     state.page = 1;
     loadFiltersAndList(false);
   });
+
   document.getElementById('btn-clear').addEventListener('click', ()=>{
     document.getElementById('f-year').value = 'all';
     document.getElementById('f-q').value = '';
@@ -265,29 +335,103 @@ window.addEventListener('DOMContentLoaded', ()=>{
     loadFiltersAndList(false);
   });
 
-  // >>> [NOWE] panel zakresu wykresu
-  const sel = document.getElementById('win-min');
-  const btn = document.getElementById('win-apply');
+  // --- [NOWE] panel zakresu wykresu (prawa kolumna) ---
+  const selWin  = document.getElementById('win-min');   // select z minutami
+  const btnWin  = document.getElementById('win-apply'); // "Zastosuj"
+  const preCk   = document.getElementById('pre-10');    // checkbox "pokaż −10 min"
 
-  if (sel && btn) {
-    btn.addEventListener('click', async ()=>{
-      const v = parseInt(sel.value || '15', 10);
+  // ustaw stan początkowy panelu (na wszelki wypadek)
+  if (selWin) selWin.value = String(state.windowMinutes || 15);
+  if (preCk)  preCk.checked = !!state.preMinutes;
+
+  // klik "Zastosuj" — zmieniamy długość okna i (ewentualnie) pre
+  if (selWin && btnWin) {
+    btnWin.addEventListener('click', async ()=>{
+      const v = parseInt(selWin.value || '15', 10);
       state.windowMinutes = (isNaN(v) ? 15 : v);
+      state.preMinutes = (preCk && preCk.checked) ? 10 : 0;
 
+      // jeśli mamy otwartego tweeta — przerysuj wykres i % zmian
       if (state.currentTweetId) {
         try {
           const t = await apiTweet(state.currentTweetId);
-          const payload = await renderChart(t.created_ts, state.windowMinutes);
+          const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
           renderPctList(payload.pct_changes);
-        } catch(e) {
+        } catch (e) {
           console.error(e);
         }
       }
     });
   }
 
-  // initial load
+  // zmiana samego checkboxa "−10 min" — natychmiast przerysuj
+  if (preCk) {
+    preCk.addEventListener('change', async ()=>{
+      state.preMinutes = preCk.checked ? 10 : 0;
+      if (state.currentTweetId) {
+        try {
+          const t = await apiTweet(state.currentTweetId);
+          const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
+          renderPctList(payload.pct_changes);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    });
+  }
+
+  // --- start ---
   loadFiltersAndList(true);
 });
+
+// // ===== wiring =====
+// window.addEventListener('DOMContentLoaded', ()=>{
+//   // buttons
+//   document.getElementById('prev').addEventListener('click', ()=>{ state.page=Math.max(1,state.page-1); loadFiltersAndList(false); });
+//   document.getElementById('next').addEventListener('click', ()=>{ state.page=state.page+1; loadFiltersAndList(false); });
+
+//   document.getElementById('btn-apply').addEventListener('click', ()=>{
+//     state.year = document.getElementById('f-year').value || 'all';
+//     state.q = document.getElementById('f-q').value.trim();
+//     state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
+//     state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
+//     state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
+//     state.page = 1;
+//     loadFiltersAndList(false);
+//   });
+//   document.getElementById('btn-clear').addEventListener('click', ()=>{
+//     document.getElementById('f-year').value = 'all';
+//     document.getElementById('f-q').value = '';
+//     document.getElementById('f-reply').checked = false;
+//     document.getElementById('f-retweet').checked = false;
+//     document.getElementById('f-quote').checked = false;
+//     state.year='all'; state.q=''; state.reply=0; state.retweet=0; state.quote=0; state.page=1;
+//     loadFiltersAndList(false);
+//   });
+
+//   // >>> [NOWE] panel zakresu wykresu
+//   const sel = document.getElementById('win-min');
+//   const btn = document.getElementById('win-apply');
+
+//   if (sel && btn) {
+//     btn.addEventListener('click', async ()=>{
+//       const v = parseInt(sel.value || '15', 10);
+//       state.windowMinutes = (isNaN(v) ? 15 : v);
+
+//       if (state.currentTweetId) {
+//         try {
+//           const t = await apiTweet(state.currentTweetId);
+//           const payload = await renderChart(t.created_ts, state.windowMinutes);
+//           renderPctList(payload.pct_changes);
+//         } catch(e) {
+//           console.error(e);
+//         }
+//       }
+//     });
+//   }
+
+//   // initial load
+//   loadFiltersAndList(true);
+// });
 
 

@@ -150,6 +150,16 @@ def slice_prices_for_window(start_dt_utc: pd.Timestamp, minutes: int = 15):
 
     return PRICES_DF.iloc[0:0].copy(), start_dt_utc, "no_data"
 
+# ===== NOWE: wycinek w sztywnych granicach (bez fallbacku) =====
+def slice_prices_between(start_dt_utc: pd.Timestamp, end_dt_utc: pd.Timestamp):
+    """
+    Zwraca df z PRICES_DF dla [start_dt_utc, end_dt_utc] BEZ żadnego przesuwania.
+    """
+    if PRICES_DF.empty:
+        return PRICES_DF.iloc[0:0].copy()
+    return PRICES_DF[(PRICES_DF["datetime"] >= start_dt_utc) &
+                     (PRICES_DF["datetime"] <= end_dt_utc)].copy()
+
 # ===== Procentowe zmiany względem chwili tweeta =====
 def _minute_close_at(dt_utc: pd.Timestamp):
     """Zwróć kurs close w minucie dt_utc (ostatni tick w tej minucie). Gdy brak – None."""
@@ -159,7 +169,7 @@ def _minute_close_at(dt_utc: pd.Timestamp):
     dfm = PRICES_DF.copy()
     dfm["minute"] = dfm["datetime"].dt.floor("min")
     row = (dfm[dfm["minute"] == minute].sort_values("datetime").tail(1))
-    return None if row.empty else float(row.iloc[0]["close"])
+    return None if row.empty else float(row.iloc[0]["open"]) #wedlug mnie powinno byc w open
 
 def percent_changes_from(start_dt_utc: pd.Timestamp,
                          intervals=(1,2,3,4,5,6,7,8,9,10,15,30,60)):
@@ -314,49 +324,90 @@ def api_tweet(tweet_id):
         "created_display": created_display
     })
 
-
 @app.route("/api/price")
 def api_price():
-    start_unix = request.args.get("start", "").strip()
-    fmt = (request.args.get("format", "") or "").lower()  # "text" => wypisz ręcznie
+    """
+    Query params:
+      start   – unix seconds (UTC) chwili tweeta (wymagane)
+      minutes – ile minut PO tweecie (domyślnie 15)
+      pre     – ile minut PRZED tweetem (domyślnie 0; np. 10)
+      format  – "text" dla legacy listy minut; domyślnie JSON
+    """
+    start_unix = (request.args.get("start", "") or "").strip()
+    fmt = (request.args.get("format", "") or "").lower()
+
+    # minutes
     try:
         minutes = int(request.args.get("minutes", 15))
     except Exception:
         minutes = 15
+    minutes = max(1, min(minutes, 24*60))  # bezpieczny limit
 
+    # pre (minuty przed)
+    try:
+        pre = int(request.args.get("pre", 0))
+    except Exception:
+        pre = 0
+    pre = max(0, min(pre, 120))  # np. pozwól do 120 min wstecz
+
+    # brak startu
     if not start_unix:
         resp = {"points": [], "reason": "no_start"}
-        return (jsonify(resp) if fmt != "text" else ("Brak parametru start.", 400, {"Content-Type":"text/plain; charset=utf-8"}))
+        if fmt != "text":
+            return jsonify(resp)
+        return ("Brak parametru start.", 400, {"Content-Type": "text/plain; charset=utf-8"})
 
+    # parsowanie startu
     try:
         start_dt = pd.to_datetime(int(float(start_unix)), unit="s", utc=True)
     except Exception:
         resp = {"points": [], "reason": "bad_start"}
-        return (jsonify(resp) if fmt != "text" else ("Zły parametr start.", 400, {"Content-Type":"text/plain; charset=utf-8"}))
+        if fmt != "text":
+            return jsonify(resp)
+        return ("Zły parametr start.", 400, {"Content-Type": "text/plain; charset=utf-8"})
 
-    df, used_start, reason = slice_prices_for_window(start_dt, minutes=minutes)
+    # --- SZTYWNE okno: [start - pre, start + minutes] ---
+    win_start = start_dt - pd.Timedelta(minutes=pre)
+    win_end   = start_dt + pd.Timedelta(minutes=minutes)
+    df = slice_prices_between(win_start, win_end)
+    reason = "ok" if not df.empty else "no_data"
 
+    # punkty do wykresu
     points = [
-        {"t": int(pd.Timestamp(r["datetime"]).value // 10**9),
-         "open": float(r["open"]), "high": float(r["high"]),
-         "low": float(r["low"]), "close": float(r["close"])}
+        {
+            "t": int(pd.Timestamp(r["datetime"]).value // 10**9),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low":  float(r["low"]),
+            "close": float(r["close"]),
+        }
         for _, r in df.iterrows()
     ]
+
     payload = {
         "points": points,
         "reason": reason,
         "requested_start": int(pd.Timestamp(start_dt).value // 10**9),
-        "used_start": int(pd.Timestamp(used_start).value // 10**9),
+        "used_start":      int(pd.Timestamp(start_dt).value // 10**9),  # NIE PRZESUWAMY
+        # pomoc do zablokowania zakresu osi X w frontendzie
+        "x_start": int(pd.Timestamp(win_start).value // 10**9),
+        "x_end":   int(pd.Timestamp(win_end).value   // 10**9),
     }
 
-    payload["pct_changes"] = percent_changes_from(start_dt)
+    # % zmiany względem minuty tweeta (jeśli brak ceny w minucie tweeta, będzie None)
+    try:
+        payload["pct_changes"] = percent_changes_from(start_dt)
+    except Exception:
+        # niech API się nie wywala nawet, jeśli helpera brak
+        payload["pct_changes"] = {}
 
+    # --- JSON domyślnie ---
     if fmt != "text":
         return jsonify(payload)
 
-    # Tekst: minuta tweeta + kolejne minuty (do 'minutes')
-    grid_start = pd.Timestamp(used_start).floor("min")
-    grid_end = grid_start + pd.Timedelta(minutes=minutes)
+    # --- Legacy: wersja tekstowa (lista minut) dla kompatybilności ---
+    grid_start = pd.Timestamp(win_start).floor("min")
+    grid_end   = pd.Timestamp(win_end).floor("min")
     idx = pd.date_range(start=grid_start, end=grid_end, freq="1min", tz="UTC")
 
     if df.empty:
@@ -377,15 +428,89 @@ def api_price():
         else:
             lines.append(f"{ts_local:%Y-%m-%d %H:%M}  close: {float(val):.4f}")
 
-    header = ["Ceny w minucie tweeta i przez kolejne minuty (czas lokalny):"]
-    if reason == "fallback_next":
-        used_local = pd.Timestamp(used_start).tz_convert(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M %Z")
-        header.append(f"[Uwaga] Tweet poza sesją. Pokazuję najbliższe dostępne okno od: {used_local}.")
+    header = [
+        "Ceny w oknie minutowym:",
+        f"Zakres: {pd.Timestamp(win_start).tz_convert(DISPLAY_TZ):%Y-%m-%d %H:%M %Z}  →  "
+        f"{pd.Timestamp(win_end).tz_convert(DISPLAY_TZ):%Y-%m-%d %H:%M %Z}",
+        f"Chwila tweeta: {pd.Timestamp(start_dt).tz_convert(DISPLAY_TZ):%Y-%m-%d %H:%M:%S %Z}",
+    ]
     if reason == "no_data":
-        header.append("Brak danych cenowych w repozytorium.")
+        header.append("Brak danych cenowych w tym oknie.")
 
     body = "\n".join(header + [""] + lines)
-    return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return (body, 200, {"Content-Type": "text/plain; charset=utf-8"})
+
+# @app.route("/api/price")
+# def api_price():
+#     start_unix = request.args.get("start", "").strip()
+#     fmt = (request.args.get("format", "") or "").lower()  # "text" => wypisz ręcznie
+#     try:
+#         minutes = int(request.args.get("minutes", 15))
+#     except Exception:
+#         minutes = 15
+
+#     if not start_unix:
+#         resp = {"points": [], "reason": "no_start"}
+#         return (jsonify(resp) if fmt != "text" else ("Brak parametru start.", 400, {"Content-Type":"text/plain; charset=utf-8"}))
+
+#     try:
+#         start_dt = pd.to_datetime(int(float(start_unix)), unit="s", utc=True)
+#     except Exception:
+#         resp = {"points": [], "reason": "bad_start"}
+#         return (jsonify(resp) if fmt != "text" else ("Zły parametr start.", 400, {"Content-Type":"text/plain; charset=utf-8"}))
+
+#     df, used_start, reason = slice_prices_for_window(start_dt, minutes=minutes)
+
+#     points = [
+#         {"t": int(pd.Timestamp(r["datetime"]).value // 10**9),
+#          "open": float(r["open"]), "high": float(r["high"]),
+#          "low": float(r["low"]), "close": float(r["close"])}
+#         for _, r in df.iterrows()
+#     ]
+#     payload = {
+#         "points": points,
+#         "reason": reason,
+#         "requested_start": int(pd.Timestamp(start_dt).value // 10**9),
+#         "used_start": int(pd.Timestamp(used_start).value // 10**9),
+#     }
+
+#     payload["pct_changes"] = percent_changes_from(start_dt)
+
+#     if fmt != "text":
+#         return jsonify(payload)
+
+#     # Tekst: minuta tweeta + kolejne minuty (do 'minutes')
+#     grid_start = pd.Timestamp(used_start).floor("min")
+#     grid_end = grid_start + pd.Timedelta(minutes=minutes)
+#     idx = pd.date_range(start=grid_start, end=grid_end, freq="1min", tz="UTC")
+
+#     if df.empty:
+#         dfm = pd.DataFrame(columns=["minute", "close"])
+#     else:
+#         dfm = df.copy()
+#         dfm["minute"] = dfm["datetime"].dt.floor("min")
+#         dfm = (dfm.sort_values("datetime").groupby("minute").last()[["close"]])
+
+#     aligned = dfm.reindex(idx)
+
+#     lines = []
+#     for ts_utc, row in aligned.itertuples():
+#         ts_local = pd.Timestamp(ts_utc).tz_convert(DISPLAY_TZ)
+#         val = (row["close"] if isinstance(row, pd.Series) else None)
+#         if pd.isna(val):
+#             lines.append(f"{ts_local:%Y-%m-%d %H:%M}  — brak notowań")
+#         else:
+#             lines.append(f"{ts_local:%Y-%m-%d %H:%M}  close: {float(val):.4f}")
+
+#     header = ["Ceny w minucie tweeta i przez kolejne minuty (czas lokalny):"]
+#     if reason == "fallback_next":
+#         used_local = pd.Timestamp(used_start).tz_convert(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M %Z")
+#         header.append(f"[Uwaga] Tweet poza sesją. Pokazuję najbliższe dostępne okno od: {used_local}.")
+#     if reason == "no_data":
+#         header.append("Brak danych cenowych w repozytorium.")
+
+#     body = "\n".join(header + [""] + lines)
+#     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 if __name__ == "__main__":
     app.run(debug=True)
