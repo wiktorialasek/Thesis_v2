@@ -156,6 +156,7 @@ async function renderChart(startUnix, minutes, pre){
   const xStart = payload.x_start ? new Date(payload.x_start * 1000) : toLocal(startUnix - (pre||0)*60);
   const xEnd   = payload.x_end   ? new Date(payload.x_end   * 1000) : toLocal(startUnix + minutes*60);
   const tweetX = toLocal(startUnix);
+  tweetX.setSeconds(0, 0); // początek tej minuty
 
   if(!pts.length){
     Plotly.newPlot('chart', [{

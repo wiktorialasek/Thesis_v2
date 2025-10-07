@@ -46,7 +46,7 @@ def to_utc(series, source_tz: str):
 # ===== Loader: Tweety =====
 def load_tweets(
     csv_path: str = TWEETS_CSV,
-    prices_min: str = "2010-06-29 21:00:00+00:00",
+    prices_min: str = "2017-09-17 21:00:00+00:00",
     prices_max: str = "2025-03-07 20:54:00+00:00"
 ) -> pd.DataFrame:
     if not os.path.exists(csv_path):
@@ -72,6 +72,14 @@ def load_tweets(
     df = df[(df["created_at"] >= prices_min) & (df["created_at"] <= prices_max)]
 
     df = df.dropna(subset=["created_at"]).sort_values("created_at", ascending=False).reset_index(drop=True)
+    # >>> tylko tweety z godzin 15:30–21:45 czasu PL (uwzględnia DST)
+    _local = df["created_at"].dt.tz_convert(DISPLAY_TZ)
+    mask = (
+        ((_local.dt.hour > 15) | ((_local.dt.hour == 15) & (_local.dt.minute >= 35))) &
+        ((_local.dt.hour < 21) | ((_local.dt.hour == 21) & (_local.dt.minute <= 50)))
+    )
+    df = df[mask].reset_index(drop=True)
+
     return df[["tweet_id", "text", "created_at", "isReply", "isRetweet", "isQuote"]]
 
 
