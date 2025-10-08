@@ -24,6 +24,34 @@
       <label class="check"><input id="f-quote" type="checkbox" /> bez quote</label>
     </div>
 
+    <div class="filters" style="margin-top:8px">
+      <div>
+        <label>Etykieta wpływu</label>
+        <select id="f-imp-label">
+          <option value="all">wszystkie</option>
+          <option value="up">up</option>
+          <option value="down">down</option>
+          <option value="neutral">neutral</option>
+        </select>
+      </div>
+      <div>
+        <label>Minuta oceny</label>
+        <select id="f-imp-min">
+          {% for m in range(1,21) %}<option value="{{m}}">{{m}}</option>{% endfor %}
+          <option value="30">30</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+      <div>
+        <label>Próg %</label>
+        <input id="f-imp-thr" type="number" step="0.1" min="0" value="0.5" />
+      </div>
+      <div style="display:flex;align-items:end">
+        <label class="check"><input id="f-imp-sort" type="checkbox" checked /> sortuj po |%|</label>
+      </div>
+    </div>
+
+
     <div style="display:flex; gap:8px; margin-bottom:10px">
       <button id="btn-apply" class="btn primary">Zastosuj</button>
       <button id="btn-clear" class="btn">Wyczyść</button>
@@ -65,6 +93,17 @@
     </div>
 
     <div id="chart" class="card" style="margin-top:12px"></div>
+    <div class="card" style="margin-top:12px;padding:12px">
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+        <h4 style="margin:0">Overlay linii (% względem minuty tweeta)</h4>
+        <div style="display:flex;gap:8px">
+          <button id="btn-overlay" class="btn">Pokaż overlay</button>
+          <button id="btn-overlay-clear" class="btn">Wyczyść zaznaczenie</button>
+        </div>
+      </div>
+      <div id="overlay" style="height:320px;margin-top:10px"></div>
+    </div>
+
 
     <div class="card" style="margin-top:12px;padding:12px">
       <h4 style="margin:0 0 6px">Zmiana ceny względem chwili tweeta</h4>
