@@ -23,7 +23,7 @@
       <label class="check"><input id="f-retweet" type="checkbox" /> bez retweet</label>
       <label class="check"><input id="f-quote" type="checkbox" /> bez quote</label>
     </div>
-    <div>
+    <!-- <div>
       <label>Etykieta</label>
         <select id="f-label">
           <option value="all" selected>Wszystkie</option>
@@ -31,7 +31,7 @@
           <option value="down">down</option>
           <option value="neutral">neutral</option>
       </select>
-    </div>
+    </div> -->
 
     <div style="margin: 6px 0 12px">
       <button id="btn-search" class="btn">Szukaj</button>
@@ -67,12 +67,10 @@
         <label class="check"><input id="f-down" type="checkbox" /> down</label>
         <label class="check"><input id="f-neutral" type="checkbox" /> neutral</label>
       </div>
-      <!-- <div class="muted" style="font-size:12px;margin-top:6px">
-        Zaznacz dokładnie jeden, aby filtrować. Brak lub kilka = wszystkie.
-      </div> -->
+      <div style="margin: 6px 0 12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button id="btn-sort" class="btn">Sort by biggest change</button>
+      </div>
     </div>
-
-    
 
 
     <div id="list" class="list" aria-live="polite"></div>

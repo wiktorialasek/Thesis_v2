@@ -36,7 +36,8 @@ const state = {
   impThr: 1.0,
 
   selected: new Set(),
-  label: 'all'
+  label: 'all',
+  sortByChange: false
 };
 
 // ===== RENDER: list =====
@@ -46,6 +47,18 @@ async function loadFiltersAndList(initial=false){
     year: state.year, reply: state.reply, retweet: state.retweet, quote: state.quote, q: state.q,
     label: state.label 
   };
+  // Jeśli sortujemy „biggest change”, wymuś globalny zasięg i większą stronę
+  if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+    params.year = 'all';
+    params.page = 1;                 // pobierz pierwszy „pakiet”
+    params.per_page = Math.max(state.per_page,200); // backend i tak przytnie do 100
+    state.year = 'all';
+    state.page = 1;
+    state.per_page = params.per_page;
+    const selYear = document.getElementById('f-year'); if (selYear) selYear.value = 'all';
+  
+  }
+
 
   if (state.useImp === 1) {
     params.imp_filter = 1;
@@ -70,13 +83,40 @@ async function loadFiltersAndList(initial=false){
 
   const list = document.getElementById('list');
   list.innerHTML = '';
-  if(data.items.length === 0){
+
+  // === NOWY KOD: przygotowanie sortowania „biggest change” ===
+  const getPct = it => {
+    if (it.imp_pct != null) return it.imp_pct;  // liczone w locie
+    if (it.pre_pct != null) return it.pre_pct;  // precompute
+    if (it.lab_pct != null) return it.lab_pct;  // fallback
+    return null;
+  };
+
+  let itemsForRender = data.items.slice();
+
+  if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+    itemsForRender.sort((a, b) => {
+      const pa = getPct(a), pb = getPct(b);
+      const aBad = (pa == null || !isFinite(pa));
+      const bBad = (pb == null || !isFinite(pb));
+      if (aBad && bBad) return 0;
+      if (aBad) return 1;   // braki na koniec
+      if (bBad) return -1;
+      // up: malejąco; down: rosnąco
+      return (state.label === 'up') ? (pb - pa) : (pa - pb);
+    });
+  }
+  // === KONIEC NOWEGO KODU ===
+
+
+
+  if(itemsForRender.length === 0){
     const empty = document.createElement('div');
     empty.className = 'row';
     empty.innerHTML = '<div class="muted">Brak wyników dla wybranych filtrów.</div>';
     list.appendChild(empty);
   } else {
-    data.items.forEach(item=>{
+    itemsForRender.forEach(item=>{
       const row = document.createElement('div');
       row.className = 'row';
       row.dataset.id = item.tweet_id;
@@ -127,8 +167,8 @@ async function loadFiltersAndList(initial=false){
   }
 
   const pagestat = document.getElementById('pagestat');
-  const start = (state.page-1)*state.per_page + 1;
-  const end = Math.min(state.page*state.per_page, state.total);
+  const start = (params.page-1)*params.per_page + 1;
+  const end = Math.min(params.page*params.per_page, state.total);
   pagestat.textContent = (state.total ? `${start}–${end} z ${state.total}` : '0');
 
   document.getElementById('prev').disabled = (state.page<=1);
@@ -317,9 +357,36 @@ window.addEventListener('DOMContentLoaded', ()=>{
     state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
     state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
     state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
-    state.label   = document.getElementById('f-label').value || 'all';
+
+    // BEZPIECZNIE: jeśli #f-label nie istnieje (bo używasz checkboxów), nie nadpisuj state.label
+    const labSel = document.getElementById('f-label');
+    if (labSel) {
+      state.label = labSel.value || 'all';
+    }
   };
-  document.getElementById('btn-search').addEventListener('click', ()=>{ readBasics(); state.page=1; loadFiltersAndList(false); });
+
+  // const readBasics = ()=>{
+  //   state.year    = document.getElementById('f-year').value || 'all';
+  //   state.q       = (document.getElementById('f-q').value || '').trim();
+  //   state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
+  //   state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
+  //   state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
+  //   state.label   = document.getElementById('f-label').value || 'all';
+  // };
+  document.getElementById('btn-search').addEventListener('click', ()=>{
+    readBasics();
+    state.page = 1;
+
+    // jeśli sort był włączony, wyłącz go i zdejmij podświetlenie przycisku
+    if (state.sortByChange) {
+      state.sortByChange = false;
+      const btnSort = document.getElementById('btn-sort');
+      if (btnSort) btnSort.classList.remove('primary');
+    }
+
+    loadFiltersAndList(false);
+  });
+
   document.getElementById('f-q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('btn-search').click(); });
 
   // etykietowanie – policz w locie wg parametrów
@@ -369,7 +436,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
     });
   }
 
-    // --- checkboksy etykiet up/down/neutral ---
+    // --- checkboksy etykiet up/down/neutral (działają: dokładnie JEDEN = filtr) ---
   const ckUp  = document.getElementById('f-up');
   const ckDn  = document.getElementById('f-down');
   const ckNe  = document.getElementById('f-neutral');
@@ -380,7 +447,6 @@ window.addEventListener('DOMContentLoaded', ()=>{
     if (ckDn && ckDn.checked) picks.push('down');
     if (ckNe && ckNe.checked) picks.push('neutral');
 
-    // dokładnie jeden -> filtr; inaczej all
     state.label = (picks.length === 1 ? picks[0] : 'all');
     state.page = 1;
     loadFiltersAndList(false);
@@ -390,6 +456,32 @@ window.addEventListener('DOMContentLoaded', ()=>{
     if (el) el.addEventListener('change', applyLabelCheckboxes);
   });
 
+    // --- sort „biggest change” w kontekście up/down ---
+  const btnSort = document.getElementById('btn-sort');
+  if (btnSort) {
+  btnSort.addEventListener('click', () => {
+    state.sortByChange = !state.sortByChange;
+    btnSort.classList.toggle('primary', state.sortByChange);
+
+    if (state.sortByChange) {
+      // 1) Wymuś „wszystkie lata”
+      state.year = 'all';
+      const selYear = document.getElementById('f-year');
+      if (selYear) selYear.value = 'all';
+
+      // 2) Pokaż więcej rekordów na stronie (max 100 wg backendu)
+      state.per_page = Math.max(state.per_page, 100);
+
+      // 3) Zacznij od 1. strony
+      state.page = 1;
+    }
+
+    loadFiltersAndList(false);
+  });
+}
+
+
+  
   // start
   loadFiltersAndList(true);
 });
