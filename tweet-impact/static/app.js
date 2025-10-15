@@ -50,6 +50,7 @@ async function loadFiltersAndList(initial=false){
   // Jeśli sortujemy „biggest change”, wymuś globalny zasięg i większą stronę
   if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
     params.year = 'all';
+    params.imp_sort = 1;
     params.page = 1;                 // pobierz pierwszy „pakiet”
     params.per_page = Math.max(state.per_page,200); // backend i tak przytnie do 100
     state.year = 'all';

@@ -294,6 +294,9 @@ def api_tweets():
     year = request.args.get("year", "all")
     q = (request.args.get("q") or "").strip()
     label = (request.args.get("label", "all") or "all").lower()
+    # --- na początku api_tweets(), obok innych parametrów:
+    imp_sort = int(request.args.get("imp_sort", 0) or 0)
+
 
 
     # tryby etykietowania (0 = precompute, 1 = licz w locie wg lab-*)
@@ -368,6 +371,22 @@ def api_tweets():
         else:
             if "pre_label" in df.columns:
                 df = df[df["pre_label"] == label]
+
+    # --- tuż po bloku filtrowania po etykiecie (po "if label in (...)" ...), a przed:
+    # total = len(df); start = ... (czyli PRZED paginacją!)
+
+    if imp_sort == 1 and label in ("up", "down"):
+        # wybieramy kolumnę do sortowania:
+        sort_col = None
+        if imp_filter == 1 and "_imp_pct" in df.columns:
+            sort_col = "_imp_pct"
+        elif "pre_pct" in df.columns:
+            sort_col = "pre_pct"
+
+        if sort_col is not None:
+            asc = (label == "down")   # down: rosnąco, up: malejąco
+            df = df.sort_values(sort_col, ascending=asc, na_position="last")
+
 
 
     total = len(df)
