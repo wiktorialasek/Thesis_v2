@@ -28,7 +28,7 @@ const state = {
 
   windowMinutes: 15,
   currentTweetId: null,
-  preMinutes: 0,
+  preMinutes: 10,
 
   // Etykietowanie
   useImp: 0,           // 0 = pokazuj precompute; 1 = licz w locie wg lab-*
@@ -368,6 +368,27 @@ window.addEventListener('DOMContentLoaded', ()=>{
       renderOverlay();
     });
   }
+
+    // --- checkboksy etykiet up/down/neutral ---
+  const ckUp  = document.getElementById('f-up');
+  const ckDn  = document.getElementById('f-down');
+  const ckNe  = document.getElementById('f-neutral');
+
+  function applyLabelCheckboxes(){
+    const picks = [];
+    if (ckUp && ckUp.checked) picks.push('up');
+    if (ckDn && ckDn.checked) picks.push('down');
+    if (ckNe && ckNe.checked) picks.push('neutral');
+
+    // dokładnie jeden -> filtr; inaczej all
+    state.label = (picks.length === 1 ? picks[0] : 'all');
+    state.page = 1;
+    loadFiltersAndList(false);
+  }
+
+  [ckUp, ckDn, ckNe].forEach(el=>{
+    if (el) el.addEventListener('change', applyLabelCheckboxes);
+  });
 
   // start
   loadFiltersAndList(true);
