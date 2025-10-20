@@ -38,38 +38,84 @@ const state = {
   selected: new Set(),
   label: 'all',
   sortByChange: false
+  
 };
+let __reqEpoch = 0;
 
 // ===== RENDER: list =====
-async function loadFiltersAndList(initial=false){
+async function loadFiltersAndList({reset=false, initial=false} = {}){
+  if (isLoading) return;          // nie wchodź re-entrant
+  isLoading = true;
+
+  const myEpoch = ++__reqEpoch;
+
+  if (reset) {
+    // wycisz scroll na czas resetu
+    if (io) io.disconnect();
+
+    state.page = 1;
+    const list = document.getElementById('list');
+    if (list) list.innerHTML = '';
+
+    const s = document.getElementById('sentinel');
+    if (s) { s.textContent = 'Loading…'; s.style.display = ''; }
+  }
+  // ... (reszta Twojej funkcji bez zmian aż do return)
+
   const params = {
     page: state.page, per_page: state.per_page,
     year: state.year, reply: state.reply, retweet: state.retweet, quote: state.quote, q: state.q,
     label: state.label 
   };
-  // Jeśli sortujemy „biggest change”, wymuś globalny zasięg i większą stronę
-  if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
-    params.year = 'all';
-    params.imp_sort = 1;
-    params.page = 1;                 // pobierz pierwszy „pakiet”
-    params.per_page = Math.max(state.per_page,200); // backend i tak przytnie do 100
-    state.year = 'all';
-    state.page = 1;
-    state.per_page = params.per_page;
-    const selYear = document.getElementById('f-year'); if (selYear) selYear.value = 'all';
+  // // Jeśli sortujemy „biggest change”, wymuś globalny zasięg i większą stronę
+  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+  //   params.year = 'all';
+  //   params.imp_sort = 1;
+  //   params.page = 1;                 // pobierz pierwszy „pakiet”
+  //   params.per_page = Math.max(state.per_page,200); // backend i tak przytnie do 100
+  //   state.year = 'all';
+  //   state.page = 1;
+  //   state.per_page = params.per_page;
+  //   const selYear = document.getElementById('f-year'); if (selYear) selYear.value = 'all';
   
+  // }
+  // Jeśli sort "biggest change" jest włączony i filtr kierunku jest jednoznaczny,
+  // poproś backend o GLOBALNE sortowanie (przed paginacją).
+  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+  //   params.imp_sort = 1;
+  //   // Dla spójności wyników sortowania wymuś zasięg na wszystkie lata
+  //   params.year = 'all';
+  //   // Pobieraj większe „paczki” (mniej dociągań w infinite scroll)
+  //   params.per_page = Math.max(state.per_page, 300);
+  // }
+  // Poproś backend o GLOBALNE sortowanie gdy kliknięty "Sort by biggest change"
+  // i filtr kierunku jest jednoznaczny (up lub down).
+  if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+    params.imp_sort = 1;
+    params.year = 'all';                     // spójność wyników
+    params.per_page = Math.max(state.per_page, 300); // większe paczki do scrolla
+    state.per_page = params.per_page; 
+    state.useImp = 1;
+    params.imp_filter = 1;
+    params.imp_min = state.impMin;
+    params.imp_thr = state.impThr;
   }
+
+
 
 
   if (state.useImp === 1) {
     params.imp_filter = 1;
     params.imp_min = state.impMin;
     params.imp_thr = state.impThr;  // licz z progiem
-    params.imp_sort = 0;
+    // UWAGA: NIE nadpisuj imp_sort, backend ma sortować globalnie gdy włączysz sortByChange
     params.imp_in = '';
   }
 
+
   const data = await apiList(params);
+  if (myEpoch !== __reqEpoch) { isLoading = false; return; } // przyszła stara odpowiedź – ignoruj
+
 
   // fill years select once
   if(!state.years.length && Array.isArray(data.years)){
@@ -82,9 +128,13 @@ async function loadFiltersAndList(initial=false){
 
   state.total = data.total;
 
-  const list = document.getElementById('list');
-  list.innerHTML = '';
+  // const list = document.getElementById('list');
+  // list.innerHTML = '';
 
+  // const frag = document.createDocumentFragment();
+
+  const list = document.getElementById('list');
+  const frag = document.createDocumentFragment();
   // === NOWY KOD: przygotowanie sortowania „biggest change” ===
   const getPct = it => {
     if (it.imp_pct != null) return it.imp_pct;  // liczone w locie
@@ -94,19 +144,29 @@ async function loadFiltersAndList(initial=false){
   };
 
   let itemsForRender = data.items.slice();
-
-  if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
-    itemsForRender.sort((a, b) => {
-      const pa = getPct(a), pb = getPct(b);
-      const aBad = (pa == null || !isFinite(pa));
-      const bBad = (pb == null || !isFinite(pb));
-      if (aBad && bBad) return 0;
-      if (aBad) return 1;   // braki na koniec
-      if (bBad) return -1;
-      // up: malejąco; down: rosnąco
-      return (state.label === 'up') ? (pb - pa) : (pa - pb);
-    });
+  // Jeśli filtr kierunku jest jednoznaczny, odsień ewentualne śmieci
+  if (state.label === 'up' || state.label === 'down' || state.label === 'neutral') {
+    const pickLabel = (it) => {
+      if (state.useImp === 1 && it.imp_label != null) return it.imp_label; // liczona w locie
+      if (it.pre_label != null) return it.pre_label;                       // precompute
+      return it.lab_label;                                                 // fallback
+    };
+    itemsForRender = itemsForRender.filter(it => pickLabel(it) === state.label);
   }
+
+
+  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
+  //   itemsForRender.sort((a, b) => {
+  //     const pa = getPct(a), pb = getPct(b);
+  //     const aBad = (pa == null || !isFinite(pa));
+  //     const bBad = (pb == null || !isFinite(pb));
+  //     if (aBad && bBad) return 0;
+  //     if (aBad) return 1;   // braki na koniec
+  //     if (bBad) return -1;
+  //     // up: malejąco; down: rosnąco
+  //     return (state.label === 'up') ? (pb - pa) : (pa - pb);
+  //   });
+  // }
   // === KONIEC NOWEGO KODU ===
 
 
@@ -163,23 +223,38 @@ async function loadFiltersAndList(initial=false){
         openDetail(item.tweet_id);
       });
 
-      list.appendChild(row);
+      frag.appendChild(row);
     });
+    list.appendChild(frag)
   }
 
-  const pagestat = document.getElementById('pagestat');
-  const start = (params.page-1)*params.per_page + 1;
-  const end = Math.min(params.page*params.per_page, state.total);
-  pagestat.textContent = (state.total ? `${start}–${end} z ${state.total}` : '0');
+  // const pagestat = document.getElementById('pagestat');
+  // const start = (params.page-1)*params.per_page + 1;
+  // const end = Math.min(params.page*params.per_page, state.total);
+  // pagestat.textContent = (state.total ? `${start}–${end} z ${state.total}` : '0');
 
-  document.getElementById('prev').disabled = (state.page<=1);
-  document.getElementById('next').disabled = (end>=state.total);
+  // document.getElementById('prev').disabled = (state.page<=1);
+  // document.getElementById('next').disabled = (end>=state.total);
 
-  if(initial){
-    const first = data.items[0];
+ if (initial) {
+    const first = (data.items && data.items[0]);
     const id = window.INITIAL_TWEET_ID || (first && first.tweet_id);
-    if(id) openDetail(id);
+    if (id) openDetail(id);
   }
+
+  const s = document.getElementById('sentinel');
+  if (s) {
+    const loaded = document.querySelectorAll('#list .row').length;
+    if (state.total === 0) {
+      s.textContent = '— brak danych —';
+    } else {
+      s.textContent = (loaded >= state.total) ? '— koniec —' : 'Loading…';
+    }
+  }
+
+  if (reset) setupInfiniteScroll();
+
+  isLoading = false;
 }
 
 // ===== DETAIL + CHART =====
@@ -314,7 +389,7 @@ async function renderOverlay(){
           xFilt.push(xs[i]); yFilt.push(ys[i]);
         }
       }
-      if (xFilt.length) traces.push({ x: xFilt, y: yFilt, mode:'lines', name: `#${id}` });
+      if (xFilt.length) traces.push({ x: xFilt, y: yFilt, mode:'lines', name: `#${id}`, line:{width:1} });
     }catch(_){}
   }
 
@@ -345,11 +420,51 @@ function renderPctList(pct){
 // ===== utils =====
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
+
+let io;
+let isLoading = false; 
+function setupInfiniteScroll(){
+  const sentinel = document.getElementById('sentinel');
+  const rootEl = document.querySelector('.layout > .pane:first-child'); // lewa kolumna
+  if (!sentinel) return;
+
+  if (io) io.disconnect();
+  io = new IntersectionObserver(async entries => {
+    const e = entries[0];
+    if (!e.isIntersecting) return;
+    if (isLoading) return;
+
+    const loaded = document.querySelectorAll('#list .row').length;
+    if (loaded >= state.total) {
+      if (sentinel) {
+        sentinel.textContent = (state.total === 0) ? '— brak danych —' : '— koniec —';
+      }
+      return;
+    }
+
+    state.page += 1;
+    try {
+      await loadFiltersAndList({reset:false, initial:false});
+    } catch (err) {
+      console.error(err);
+    }
+  }, {
+    root: rootEl || null,
+    rootMargin: '200px',
+    threshold: 0.01
+  });
+
+  io.observe(sentinel);
+}
+
+
+
+
 // ===== wiring =====
 window.addEventListener('DOMContentLoaded', ()=>{
   // paginacja
-  document.getElementById('prev').addEventListener('click', ()=>{ state.page = Math.max(1, state.page - 1); loadFiltersAndList(false); });
-  document.getElementById('next').addEventListener('click', ()=>{ state.page = state.page + 1; loadFiltersAndList(false); });
+  // document.getElementById('prev').addEventListener('click', ()=>{ state.page = Math.max(1, state.page - 1); loadFiltersAndList(false); });
+  // document.getElementById('next').addEventListener('click', ()=>{ state.page = state.page + 1; loadFiltersAndList(false); });
 
   // podstawowe filtry
   const readBasics = ()=>{
@@ -385,7 +500,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
       if (btnSort) btnSort.classList.remove('primary');
     }
 
-    loadFiltersAndList(false);
+    loadFiltersAndList({reset:true});
   });
 
   document.getElementById('f-q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('btn-search').click(); });
@@ -396,8 +511,16 @@ window.addEventListener('DOMContentLoaded', ()=>{
     state.impThr = parseFloat(document.getElementById('lab-thr').value || '1');
     state.useImp = 1; // włącz liczenie w locie
     state.page = 1;
-    loadFiltersAndList(false);
+    loadFiltersAndList({reset:true});
   });
+
+  document.getElementById('btn-clear-overlay')?.addEventListener('click', ()=>{
+    state.selected.clear();
+    Plotly.purge('overlay');
+    // odznacz checkboxy „wybierz” na obecnie widocznej liście
+    document.querySelectorAll('#list .row .pick').forEach(ch => ch.checked = false);
+  });
+
 
   // panel zakresu wykresu
   const selWin  = document.getElementById('win-min');
@@ -450,7 +573,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
     state.label = (picks.length === 1 ? picks[0] : 'all');
     state.page = 1;
-    loadFiltersAndList(false);
+    loadFiltersAndList({reset: true});
   }
 
   [ckUp, ckDn, ckNe].forEach(el=>{
@@ -460,30 +583,32 @@ window.addEventListener('DOMContentLoaded', ()=>{
     // --- sort „biggest change” w kontekście up/down ---
   const btnSort = document.getElementById('btn-sort');
   if (btnSort) {
-  btnSort.addEventListener('click', () => {
-    state.sortByChange = !state.sortByChange;
-    btnSort.classList.toggle('primary', state.sortByChange);
+    btnSort.addEventListener('click', () => {
+      state.sortByChange = !state.sortByChange;
+      btnSort.classList.toggle('primary', state.sortByChange);
 
-    if (state.sortByChange) {
-      // 1) Wymuś „wszystkie lata”
-      state.year = 'all';
-      const selYear = document.getElementById('f-year');
-      if (selYear) selYear.value = 'all';
+      if (state.sortByChange) {
+        // 1) Wymuś „wszystkie lata”
+        state.year = 'all';
+        const selYear = document.getElementById('f-year');
+        if (selYear) selYear.value = 'all';
 
-      // 2) Pokaż więcej rekordów na stronie (max 100 wg backendu)
-      state.per_page = Math.max(state.per_page, 100);
+        // 2) Buforuj większe paczki
+        state.per_page = Math.max(state.per_page, 300);
 
-      // 3) Zacznij od 1. strony
-      state.page = 1;
-    }
+        // 3) Od nowa
+        state.page = 1;
+      }
 
-    loadFiltersAndList(false);
-  });
-}
+      loadFiltersAndList({reset:true});
+    });
+  }
+
 
 
   
   // start
-  loadFiltersAndList(true);
+  loadFiltersAndList({reset:true, initial:true});
+  setupInfiniteScroll();
 });
 

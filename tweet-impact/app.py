@@ -289,7 +289,7 @@ def index():
 @app.route("/api/tweets")
 def api_tweets():
     page = int(request.args.get("page", 1))
-    per_page = min(max(int(request.args.get("per_page", 20)), 5), 100)
+    per_page = min(max(int(request.args.get("per_page", 20)), 5), 500)
     year = request.args.get("year", "all")
     q = (request.args.get("q") or "").strip()
     label = (request.args.get("label", "all") or "all").lower()
