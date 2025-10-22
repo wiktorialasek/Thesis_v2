@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="layout">
-  <!-- LEWA KOLUMNA: filtry + lista -->
+  <!-- LEWA KOLUMNA -->
   <div class="card pane">
-    <div style="margin-bottom:10px"><strong>Filtry</strong></div>
+    <div style="margin-bottom:10px"><strong>Filtry podstawowe</strong></div>
 
     <div class="filters">
       <div>
@@ -24,29 +24,55 @@
       <label class="check"><input id="f-quote" type="checkbox" /> bez quote</label>
     </div>
 
-    <div style="display:flex; gap:8px; margin-bottom:10px">
-      <button id="btn-apply" class="btn primary">Zastosuj</button>
-      <button id="btn-clear" class="btn">Wyczyść</button>
+    <div style="margin: 6px 0 12px">
+      <button id="btn-search" class="btn">Szukaj</button>
     </div>
 
-    <div id="list" class="list" aria-live="polite">
-      <!-- wypełni JS -->
+    <div class="card" style="padding:10px;margin-bottom:10px">
+      <div style="margin-bottom:6px">
+        <strong>Etykietowanie</strong>
+      </div>
+      <div class="filters" style="margin-bottom:8px">
+        <div>
+          <label>Minuta etykietowania</label>
+          <select id="lab-min">
+            {% for m in range(1,21) %}<option value="{{m}}" {{ 'selected' if m==8 else '' }}>{{m}}</option>{% endfor %}
+            <option value="30">30</option>
+            <option value="60">60</option>
+          </select>
+        </div>
+        <div>
+          <label>Próg % dla etykiety</label>
+          <input id="lab-thr" type="number" step="0.1" min="0" value="1" />
+        </div>
+      </div>
+      <button id="btn-label-apply" class="btn primary" type="button">Nadaj etykiety</button>
     </div>
 
-    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:10px">
-      <button id="prev" class="btn" type="button">&larr; Poprzednie</button>
-      <span id="pagestat" class="muted" style="align-self:center">—</span>
-      <button id="next" class="btn" type="button">Następne &rarr;</button>
+    <div class="card" style="padding:10px;margin:10px 0">
+      <div style="margin-bottom:6px"><strong>Filtr: kierunek</strong></div>
+      <div class="checks">
+        <label class="check"><input id="f-up" type="checkbox" /> up</label>
+        <label class="check"><input id="f-down" type="checkbox" /> down</label>
+        <label class="check"><input id="f-neutral" type="checkbox" /> neutral</label>
+      </div>
+      <div style="margin: 6px 0 12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button id="btn-sort" class="btn">Sort by biggest change</button>
+      </div>
     </div>
+
+    <!-- [NEW] usuwamy stary, „długi” tekst statystyk – KPI jest w headerze -->
+
+    <div id="list" class="list" aria-live="polite"></div>
+    <div id="sentinel" class="muted" style="text-align:center;padding:10px">Loading…</div>
   </div>
 
-  <!-- PRAWA KOLUMNA: szczegóły + wykres + tekst -->
+  <!-- PRAWA KOLUMNA -->
   <div class="card pane">
     <div id="detail">
       <div class="muted">Wybierz tweet z lewej listy…</div>
     </div>
 
-        <!-- Panel: zakres wykresu -->
     <div class="card" style="margin-top:12px;padding:8px;display:flex;gap:8px;align-items:center">
       <label for="win-min" class="muted" style="min-width:120px">Zakres wykresu:</label>
       <select id="win-min">
@@ -56,15 +82,25 @@
         <option value="30">30 min</option>
         <option value="60">60 min</option>
       </select>
-        <label style="display:flex;align-items:center;gap:6px;margin-left:8px">
+      <label style="display:flex;align-items:center;gap:6px;margin-left:8px">
         <input type="checkbox" id="pre-10">
         <span class="muted">pokaż −10 min</span>
       </label>
-
       <button id="win-apply" class="btn">Zastosuj</button>
     </div>
 
     <div id="chart" class="card" style="margin-top:12px"></div>
+
+    <div class="card" style="margin-top:12px;padding:12px">
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <h4 style="margin:0">Overlay linii (% względem minuty tweeta)</h4>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="muted" style="font-size:12px">Zaznacz „wybierz” przy tweetach — overlay odświeża się automatycznie.</div>
+          <button id="btn-clear-overlay" class="btn" type="button">Wyczyść overlay</button>
+        </div>
+      </div>
+      <div id="overlay" style="height:320px;margin-top:10px"></div>
+    </div>
 
     <div class="card" style="margin-top:12px;padding:12px">
       <h4 style="margin:0 0 6px">Zmiana ceny względem chwili tweeta</h4>
@@ -73,9 +109,7 @@
   </div>
 </div>
 
-<!-- initial id przekazany z serwera (jeśli jest)
 <script>
-  window.INITIAL_TWEET_ID = {{ (initial_id or 'null')|tojson }};
-</script> -->
+  window.INITIAL_TWEET_ID = JSON.parse('{{ (initial_id or "null")|tojson|safe }}');
+</script>
 {% endblock %}
-
