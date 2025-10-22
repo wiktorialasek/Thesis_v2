@@ -23,21 +23,11 @@
       <label class="check"><input id="f-retweet" type="checkbox" /> bez retweet</label>
       <label class="check"><input id="f-quote" type="checkbox" /> bez quote</label>
     </div>
-    <!-- <div>
-      <label>Etykieta</label>
-        <select id="f-label">
-          <option value="all" selected>Wszystkie</option>
-          <option value="up">up</option>
-          <option value="down">down</option>
-          <option value="neutral">neutral</option>
-      </select>
-    </div> -->
 
     <div style="margin: 6px 0 12px">
       <button id="btn-search" class="btn">Szukaj</button>
     </div>
 
-    <!-- ETYKIETOWANIE -->
     <div class="card" style="padding:10px;margin-bottom:10px">
       <div style="margin-bottom:6px">
         <strong>Etykietowanie</strong>
@@ -59,7 +49,6 @@
       <button id="btn-label-apply" class="btn primary" type="button">Nadaj etykiety</button>
     </div>
 
-        <!-- FILTR KIERUNKU (checkboxy) -->
     <div class="card" style="padding:10px;margin:10px 0">
       <div style="margin-bottom:6px"><strong>Filtr: kierunek</strong></div>
       <div class="checks">
@@ -72,14 +61,9 @@
       </div>
     </div>
 
+    <!-- [NEW] usuwamy stary, „długi” tekst statystyk – KPI jest w headerze -->
 
     <div id="list" class="list" aria-live="polite"></div>
-
-    <!-- <div style="display:flex;gap:8px;justify-content:space-between;margin-top:10px">
-      <button id="prev" class="btn" type="button">&larr; Poprzednie</button>
-      <span id="pagestat" class="muted" style="align-self:center">—</span>
-      <button id="next" class="btn" type="button">Następne &rarr;</button>
-    </div> -->
     <div id="sentinel" class="muted" style="text-align:center;padding:10px">Loading…</div>
   </div>
 
@@ -107,14 +91,6 @@
 
     <div id="chart" class="card" style="margin-top:12px"></div>
 
-    <!-- <div class="card" style="margin-top:12px;padding:12px">
-      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
-        <h4 style="margin:0">Overlay linii (% względem minuty tweeta)</h4>
-        <div class="muted" style="font-size:12px">Zaznacz „wybierz” przy tweetach — overlay odświeża się automatycznie.</div>
-      </div>
-      <div id="overlay" style="height:320px;margin-top:10px"></div>
-    </div> -->
-
     <div class="card" style="margin-top:12px;padding:12px">
       <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">
         <h4 style="margin:0">Overlay linii (% względem minuty tweeta)</h4>
@@ -125,8 +101,6 @@
       </div>
       <div id="overlay" style="height:320px;margin-top:10px"></div>
     </div>
-
-
 
     <div class="card" style="margin-top:12px;padding:12px">
       <h4 style="margin:0 0 6px">Zmiana ceny względem chwili tweeta</h4>

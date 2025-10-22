@@ -31,93 +31,96 @@ const state = {
   preMinutes: 10,
 
   // Etykietowanie
-  useImp: 0,           // 0 = pokazuj precompute; 1 = licz w locie wg lab-*
+  useImp: 0,           // 0 = precompute; 1 = licz w locie
   impMin: 8,
   impThr: 1.0,
 
   selected: new Set(),
   label: 'all',
   sortByChange: false
-  
 };
+const DEFAULT_PER_PAGE = 20; // [NEW]
 let __reqEpoch = 0;
+let io;
+let isLoading = false;
+
+// [NEW] wypełnianie KPI w nagłówku
+function renderTopKpis(st){
+  const fmt = v => (v==null || !isFinite(v)) ? '—' : (Number(v).toFixed(2)+'%');
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  if(!st){ set('k-n','—'); set('k-up','—'); set('k-down','—'); set('k-neutral','—'); set('k-min','—'); set('k-med','—'); set('k-avg','—'); set('k-max','—'); return; }
+
+  set('k-n', String(st.n ?? '—'));
+  set('k-up', String(st.n_up ?? '—'));
+  set('k-down', String(st.n_down ?? '—'));
+  set('k-neutral', String(st.n_neutral ?? '—'));
+  set('k-min', fmt(st.pct_min));
+  set('k-med', fmt(st.pct_median));
+  set('k-avg', fmt(st.pct_mean));
+  set('k-max', fmt(st.pct_max));
+
+  const mode = document.getElementById('k-mode');
+  if (mode) {
+    mode.textContent = (st.mode === 'imp')
+      ? `m=${st.minute}${(st.threshold!=null && st.threshold!=='')?`, próg=${st.threshold}%`:''}`
+      : `pre m=${st.minute}, próg=${st.threshold}%`;
+  }
+  const filt = document.getElementById('k-filter');
+  if (filt) {
+    const f = st.label_filter || 'all';
+    filt.textContent = `filtr: ${f}`;
+    filt.classList.remove('up','down','neutral');
+    filt.classList.add((f==='up')?'up':(f==='down')?'down':'neutral');
+  }
+}
 
 // ===== RENDER: list =====
 async function loadFiltersAndList({reset=false, initial=false} = {}){
-  if (isLoading) return;          // nie wchodź re-entrant
+  if (isLoading) return;
   isLoading = true;
-
   const myEpoch = ++__reqEpoch;
 
   if (reset) {
-    // wycisz scroll na czas resetu
     if (io) io.disconnect();
-
     state.page = 1;
     const list = document.getElementById('list');
     if (list) list.innerHTML = '';
-
     const s = document.getElementById('sentinel');
     if (s) { s.textContent = 'Loading…'; s.style.display = ''; }
   }
-  // ... (reszta Twojej funkcji bez zmian aż do return)
 
   const params = {
     page: state.page, per_page: state.per_page,
     year: state.year, reply: state.reply, retweet: state.retweet, quote: state.quote, q: state.q,
-    label: state.label 
+    label: state.label
   };
-  // // Jeśli sortujemy „biggest change”, wymuś globalny zasięg i większą stronę
-  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
-  //   params.year = 'all';
-  //   params.imp_sort = 1;
-  //   params.page = 1;                 // pobierz pierwszy „pakiet”
-  //   params.per_page = Math.max(state.per_page,200); // backend i tak przytnie do 100
-  //   state.year = 'all';
-  //   state.page = 1;
-  //   state.per_page = params.per_page;
-  //   const selYear = document.getElementById('f-year'); if (selYear) selYear.value = 'all';
-  
-  // }
-  // Jeśli sort "biggest change" jest włączony i filtr kierunku jest jednoznaczny,
-  // poproś backend o GLOBALNE sortowanie (przed paginacją).
-  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
-  //   params.imp_sort = 1;
-  //   // Dla spójności wyników sortowania wymuś zasięg na wszystkie lata
-  //   params.year = 'all';
-  //   // Pobieraj większe „paczki” (mniej dociągań w infinite scroll)
-  //   params.per_page = Math.max(state.per_page, 300);
-  // }
-  // Poproś backend o GLOBALNE sortowanie gdy kliknięty "Sort by biggest change"
-  // i filtr kierunku jest jednoznaczny (up lub down).
+
+  // [NEW] sort globalny – backend
   if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
     params.imp_sort = 1;
-    params.year = 'all';                     // spójność wyników
-    params.per_page = Math.max(state.per_page, 300); // większe paczki do scrolla
-    state.per_page = params.per_page; 
+    params.year = 'all';
+    params.per_page = Math.max(state.per_page, 300);
+    state.per_page = params.per_page;
     state.useImp = 1;
     params.imp_filter = 1;
     params.imp_min = state.impMin;
     params.imp_thr = state.impThr;
   }
 
-
-
-
   if (state.useImp === 1) {
     params.imp_filter = 1;
     params.imp_min = state.impMin;
-    params.imp_thr = state.impThr;  // licz z progiem
-    // UWAGA: NIE nadpisuj imp_sort, backend ma sortować globalnie gdy włączysz sortByChange
-    params.imp_in = '';
+    params.imp_thr = state.impThr;
   }
 
-
   const data = await apiList(params);
-  if (myEpoch !== __reqEpoch) { isLoading = false; return; } // przyszła stara odpowiedź – ignoruj
+  if (myEpoch !== __reqEpoch) { isLoading = false; return; }
 
+  // [NEW] KPI w nagłówku
+  renderTopKpis(data.stats);
 
-  // fill years select once
+  // years select (raz)
   if(!state.years.length && Array.isArray(data.years)){
     state.years = data.years;
     const sel = document.getElementById('f-year');
@@ -126,50 +129,11 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
     });
   }
 
-  state.total = data.total;
-
-  // const list = document.getElementById('list');
-  // list.innerHTML = '';
-
-  // const frag = document.createDocumentFragment();
+  state.total = data.total || 0;
 
   const list = document.getElementById('list');
   const frag = document.createDocumentFragment();
-  // === NOWY KOD: przygotowanie sortowania „biggest change” ===
-  const getPct = it => {
-    if (it.imp_pct != null) return it.imp_pct;  // liczone w locie
-    if (it.pre_pct != null) return it.pre_pct;  // precompute
-    if (it.lab_pct != null) return it.lab_pct;  // fallback
-    return null;
-  };
-
-  let itemsForRender = data.items.slice();
-  // Jeśli filtr kierunku jest jednoznaczny, odsień ewentualne śmieci
-  if (state.label === 'up' || state.label === 'down' || state.label === 'neutral') {
-    const pickLabel = (it) => {
-      if (state.useImp === 1 && it.imp_label != null) return it.imp_label; // liczona w locie
-      if (it.pre_label != null) return it.pre_label;                       // precompute
-      return it.lab_label;                                                 // fallback
-    };
-    itemsForRender = itemsForRender.filter(it => pickLabel(it) === state.label);
-  }
-
-
-  // if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
-  //   itemsForRender.sort((a, b) => {
-  //     const pa = getPct(a), pb = getPct(b);
-  //     const aBad = (pa == null || !isFinite(pa));
-  //     const bBad = (pb == null || !isFinite(pb));
-  //     if (aBad && bBad) return 0;
-  //     if (aBad) return 1;   // braki na koniec
-  //     if (bBad) return -1;
-  //     // up: malejąco; down: rosnąco
-  //     return (state.label === 'up') ? (pb - pa) : (pa - pb);
-  //   });
-  // }
-  // === KONIEC NOWEGO KODU ===
-
-
+  const itemsForRender = (data.items || []).slice();  // [NEW] bez dodatkowego filtrowania w kliencie!
 
   if(itemsForRender.length === 0){
     const empty = document.createElement('div');
@@ -182,17 +146,19 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
       row.className = 'row';
       row.dataset.id = item.tweet_id;
 
-      // źródło pigułki: imp_* (jeśli liczono), inaczej precompute
-      const label  = (item.imp_label != null ? item.imp_label : (item.pre_label ?? item.lab_label));
-      const minute = (item.imp_min   != null ? item.imp_min   : (item.pre_min   ?? item.lab_min));
-      const pct    = (item.imp_pct   != null ? item.imp_pct   : (item.pre_pct   ?? item.lab_pct));
+      // [NEW] własny tooltip zamiast napisu m=…, Δ=…
+      const minute = (item.imp_min != null ? item.imp_min : (item.pre_min ?? item.lab_min));
+      const pct    = (item.imp_pct != null ? item.imp_pct : (item.pre_pct ?? item.lab_pct));
+      const metaText = (minute != null) ? `m=${minute}, Δ=${pct == null ? '—' : (Number(pct).toFixed(2)+'%')}` : '';
+      if (metaText) row.title = metaText;
 
+      const label  = (item.imp_label != null ? item.imp_label : (item.pre_label ?? item.lab_label));
       let pill = '';
       if (label === 'up')      pill = '<span class="pill" style="background:#ecfdf5;color:#065f46">↑ up</span>';
       else if (label === 'down') pill = '<span class="pill" style="background:#fef2f2;color:#991b1b">↓ down</span>';
       else                      pill = '<span class="pill" style="background:#f3f4f6;color:#111">≈ neutral</span>';
 
-      const meta = (minute != null) ? `m=${minute}, Δ=${pct == null ? '—' : (Number(pct).toFixed(2)+'%')}` : '';
+      const rankBadge = (item.rank ? `<span class="pill" title="pozycja po sortowaniu">#${item.rank}</span>` : '');
       const checked = state.selected.has(item.tweet_id) ? 'checked' : '';
 
       row.innerHTML = `
@@ -203,7 +169,7 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
             <div class="muted" style="font-size:12px;margin-top:4px">${item.created_at_display}</div>
             <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
               ${pill}
-              <span class="muted" style="font-size:12px">${meta}</span>
+              ${rankBadge}
             </div>
           </div>
           <label class="check" style="white-space:nowrap">
@@ -225,21 +191,7 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
 
       frag.appendChild(row);
     });
-    list.appendChild(frag)
-  }
-
-  // const pagestat = document.getElementById('pagestat');
-  // const start = (params.page-1)*params.per_page + 1;
-  // const end = Math.min(params.page*params.per_page, state.total);
-  // pagestat.textContent = (state.total ? `${start}–${end} z ${state.total}` : '0');
-
-  // document.getElementById('prev').disabled = (state.page<=1);
-  // document.getElementById('next').disabled = (end>=state.total);
-
- if (initial) {
-    const first = (data.items && data.items[0]);
-    const id = window.INITIAL_TWEET_ID || (first && first.tweet_id);
-    if (id) openDetail(id);
+    list.appendChild(frag);
   }
 
   const s = document.getElementById('sentinel');
@@ -253,7 +205,6 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
   }
 
   if (reset) setupInfiniteScroll();
-
   isLoading = false;
 }
 
@@ -352,12 +303,9 @@ async function renderOverlay(){
       const closes = g.close || [];
       let baseTs = g.tweet_minute_ts;
 
-      // znajdź indeks minuty tweeta w siatce
       let baseIdx = minutesTs.indexOf(baseTs);
-
-      // jeśli brak albo brak kursu w tej minucie -> fallback do pierwszej minuty ≥ tweet z nie-NULL kursem
       let base = null;
-      if (baseIdx < 0) baseIdx = 0; // bezpieczeństwo (nie powinno się zdarzyć)
+      if (baseIdx < 0) baseIdx = 0;
       if (baseIdx >= 0) base = closes[baseIdx];
       if (base == null) {
         for (let i = Math.max(0, baseIdx); i < closes.length; i++){
@@ -369,19 +317,17 @@ async function renderOverlay(){
           }
         }
       }
-      if (base == null) continue; // brak danych w całym oknie
+      if (base == null) continue;
 
-      // buduj serię względem (być może) przesuniętej bazy
       const xs = [], ys = [];
       for (let i=0;i<minutesTs.length;i++){
         const v = closes[i];
         if (v == null) continue;
-        const offsetMin = (minutesTs[i] - baseTs)/60; // minuty względem minuty bazowej
+        const offsetMin = (minutesTs[i] - baseTs)/60;
         xs.push(offsetMin);
         ys.push((v/base - 1)*100);
       }
 
-      // ogranicz do sensownego zakresu (-pre .. +mins)
       const xFilt = [], yFilt = [];
       const left = -pre, right = mins;
       for (let i=0;i<xs.length;i++){
@@ -403,7 +349,6 @@ async function renderOverlay(){
   }, {responsive:true});
 }
 
-
 function renderPctList(pct){
   const minuteList = document.getElementById('minute-list');
   if(!pct){ minuteList.textContent = 'Brak danych.'; return; }
@@ -420,12 +365,9 @@ function renderPctList(pct){
 // ===== utils =====
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
-
-let io;
-let isLoading = false; 
 function setupInfiniteScroll(){
   const sentinel = document.getElementById('sentinel');
-  const rootEl = document.querySelector('.layout > .pane:first-child'); // lewa kolumna
+  const rootEl = document.querySelector('.layout > .pane:first-child');
   if (!sentinel) return;
 
   if (io) io.disconnect();
@@ -457,59 +399,37 @@ function setupInfiniteScroll(){
   io.observe(sentinel);
 }
 
-
-
-
 // ===== wiring =====
 window.addEventListener('DOMContentLoaded', ()=>{
-  // paginacja
-  // document.getElementById('prev').addEventListener('click', ()=>{ state.page = Math.max(1, state.page - 1); loadFiltersAndList(false); });
-  // document.getElementById('next').addEventListener('click', ()=>{ state.page = state.page + 1; loadFiltersAndList(false); });
-
-  // podstawowe filtry
   const readBasics = ()=>{
     state.year    = document.getElementById('f-year').value || 'all';
     state.q       = (document.getElementById('f-q').value || '').trim();
     state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
     state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
     state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
-
-    // BEZPIECZNIE: jeśli #f-label nie istnieje (bo używasz checkboxów), nie nadpisuj state.label
     const labSel = document.getElementById('f-label');
-    if (labSel) {
-      state.label = labSel.value || 'all';
-    }
+    if (labSel) state.label = labSel.value || 'all';
   };
 
-  // const readBasics = ()=>{
-  //   state.year    = document.getElementById('f-year').value || 'all';
-  //   state.q       = (document.getElementById('f-q').value || '').trim();
-  //   state.reply   = document.getElementById('f-reply').checked ? -1 : 0;
-  //   state.retweet = document.getElementById('f-retweet').checked ? -1 : 0;
-  //   state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
-  //   state.label   = document.getElementById('f-label').value || 'all';
-  // };
   document.getElementById('btn-search').addEventListener('click', ()=>{
     readBasics();
     state.page = 1;
-
-    // jeśli sort był włączony, wyłącz go i zdejmij podświetlenie przycisku
     if (state.sortByChange) {
       state.sortByChange = false;
       const btnSort = document.getElementById('btn-sort');
       if (btnSort) btnSort.classList.remove('primary');
+      state.per_page = DEFAULT_PER_PAGE; // [NEW]
     }
-
     loadFiltersAndList({reset:true});
   });
 
   document.getElementById('f-q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('btn-search').click(); });
 
-  // etykietowanie – policz w locie wg parametrów
   document.getElementById('btn-label-apply').addEventListener('click', ()=>{
     state.impMin = parseInt(document.getElementById('lab-min').value || '8', 10);
-    state.impThr = parseFloat(document.getElementById('lab-thr').value || '1');
-    state.useImp = 1; // włącz liczenie w locie
+    const thrRaw = document.getElementById('lab-thr').value || '1';
+    state.impThr = parseFloat(String(thrRaw).replace(',', '.'));
+    state.useImp = 1;
     state.page = 1;
     loadFiltersAndList({reset:true});
   });
@@ -517,12 +437,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('btn-clear-overlay')?.addEventListener('click', ()=>{
     state.selected.clear();
     Plotly.purge('overlay');
-    // odznacz checkboxy „wybierz” na obecnie widocznej liście
     document.querySelectorAll('#list .row .pick').forEach(ch => ch.checked = false);
   });
 
-
-  // panel zakresu wykresu
   const selWin  = document.getElementById('win-min');
   const btnWin  = document.getElementById('win-apply');
   const preCk   = document.getElementById('pre-10');
@@ -560,11 +477,10 @@ window.addEventListener('DOMContentLoaded', ()=>{
     });
   }
 
-    // --- checkboksy etykiet up/down/neutral (działają: dokładnie JEDEN = filtr) ---
+  // checkboksy etykiet
   const ckUp  = document.getElementById('f-up');
   const ckDn  = document.getElementById('f-down');
   const ckNe  = document.getElementById('f-neutral');
-
   function applyLabelCheckboxes(){
     const picks = [];
     if (ckUp && ckUp.checked) picks.push('up');
@@ -572,15 +488,19 @@ window.addEventListener('DOMContentLoaded', ()=>{
     if (ckNe && ckNe.checked) picks.push('neutral');
 
     state.label = (picks.length === 1 ? picks[0] : 'all');
+
+    // jeśli filtr up/down – licz po znaku (pusty próg)
+    if (state.label === 'up' || state.label === 'down') {
+      state.useImp = 1;
+      state.impThr = ''; // [NEW] => backend wejdzie w tryb "tylko znak"
+    }
+
     state.page = 1;
     loadFiltersAndList({reset: true});
   }
+  [ckUp, ckDn, ckNe].forEach(el=>{ if (el) el.addEventListener('change', applyLabelCheckboxes); });
 
-  [ckUp, ckDn, ckNe].forEach(el=>{
-    if (el) el.addEventListener('change', applyLabelCheckboxes);
-  });
-
-    // --- sort „biggest change” w kontekście up/down ---
+  // sort biggest change
   const btnSort = document.getElementById('btn-sort');
   if (btnSort) {
     btnSort.addEventListener('click', () => {
@@ -588,25 +508,19 @@ window.addEventListener('DOMContentLoaded', ()=>{
       btnSort.classList.toggle('primary', state.sortByChange);
 
       if (state.sortByChange) {
-        // 1) Wymuś „wszystkie lata”
         state.year = 'all';
         const selYear = document.getElementById('f-year');
         if (selYear) selYear.value = 'all';
-
-        // 2) Buforuj większe paczki
         state.per_page = Math.max(state.per_page, 300);
-
-        // 3) Od nowa
+        state.page = 1;
+      } else {
+        state.per_page = DEFAULT_PER_PAGE; // [NEW] powrót do normalnej paginacji
         state.page = 1;
       }
-
       loadFiltersAndList({reset:true});
     });
   }
 
-
-
-  
   // start
   loadFiltersAndList({reset:true, initial:true});
   setupInfiniteScroll();

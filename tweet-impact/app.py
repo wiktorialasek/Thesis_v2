@@ -11,13 +11,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TWEETS_CSV = os.path.join(BASE_DIR, "data", "all_musk_posts.csv")
 PRICES_DIR = os.path.join(BASE_DIR, "data", "TSLA_sorted")
 
-# Precompute (domyślnie widoczne w UI)
 PRE_MINUTE = 8
 PRE_THRESHOLD = 1.0  # %
 
-# Limity
 ALLOWED_IMPACT_MINUTES = list(range(1, 21)) + [30, 60]
-H_MAX = 60  # maks. horyzont okna do "szybkich" obliczeń
+H_MAX = 60
 
 app = Flask(
     __name__,
@@ -26,30 +24,18 @@ app = Flask(
 )
 
 def to_utc(series, source_tz: str):
-    """
-    Zwróć tz-aware UTC:
-    - jeśli wejście ma już tz -> konwersja do UTC,
-    - jeśli wejście jest naivem -> traktuj jako source_tz i konwertuj do UTC.
-    """
     s = pd.to_datetime(series, errors="coerce", utc=False)
-
-    # Ustal czy ma tz (nie rzucając na pustych seriach)
-    has_tz = False
     try:
         has_tz = s.dt.tz is not None
     except Exception:
         has_tz = False
-
     if has_tz:
         return s.dt.tz_convert("UTC")
-
-    # Naivem -> lokalizuj do source_tz, potem UTC
     tz = ZoneInfo(source_tz)
     s = s.dt.tz_localize(tz, nonexistent="shift_forward", ambiguous="NaT")
     return s.dt.tz_convert("UTC")
 
-
-# ===== Loader: Tweety =====
+# ===== Loader Tweety =====
 def load_tweets(
     csv_path: str = TWEETS_CSV,
     prices_min: str = "2017-09-17 21:00:00+00:00",
@@ -76,7 +62,7 @@ def load_tweets(
     df = df[(df["created_at"] >= prices_min) & (df["created_at"] <= prices_max)]
     df = df.dropna(subset=["created_at"]).sort_values("created_at", ascending=False).reset_index(drop=True)
 
-    # tylko 15:30–21:45 czasu PL (uwzględnia DST)
+    # tylko 15:30–21:45 czasu PL
     _local = df["created_at"].dt.tz_convert(DISPLAY_TZ)
     mask = (
         ((_local.dt.hour > 15) | ((_local.dt.hour == 15) & (_local.dt.minute >= 30))) &
@@ -86,7 +72,7 @@ def load_tweets(
 
     return df[["tweet_id", "text", "created_at", "isReply", "isRetweet", "isQuote"]]
 
-# ===== Loader: Ceny =====
+# ===== Loader Ceny =====
 def load_prices_from_dir(base_dir: str = PRICES_DIR) -> pd.DataFrame:
     if not os.path.isdir(base_dir):
         print(f"[startup] Brak katalogu cen: {base_dir}")
@@ -116,7 +102,6 @@ def load_prices_from_dir(base_dir: str = PRICES_DIR) -> pd.DataFrame:
                 "low":   pd.to_numeric(pick("low"),  errors="coerce"),
                 "close": pd.to_numeric(pick("close"),errors="coerce"),
             }).dropna(subset=["datetime"])
-            # jeśli CSV już ma "% change", zachowaj:
             for cand in ["% change", "%change", "pct change", "pct_change"]:
                 if cand in raw.columns:
                     part[cand] = pd.to_numeric(raw[cand], errors="coerce")
@@ -131,27 +116,22 @@ def load_prices_from_dir(base_dir: str = PRICES_DIR) -> pd.DataFrame:
     all_prices = pd.concat(frames, ignore_index=True).sort_values("datetime").reset_index(drop=True)
     return all_prices
 
-# ===== Bufory do szybkich obliczeń z % change =====
-MIN_IDX = None           # DatetimeIndex minut (UTC)
-R_MINUTE = None          # r_t (ułamek), np. 0.003 = 0.3% na minutę
-LOGF_PREFIX = None       # prefiks log(1+r): shape (N+1,), L[0]=0
-MINUTE_TO_POS = None     # map: minute_ts(int) -> index
+# ===== Bufory =====
+MIN_IDX = None
+R_MINUTE = None
+LOGF_PREFIX = None
+MINUTE_TO_POS = None
 
 def _build_minute_buffers(prices_df: pd.DataFrame):
-    """Zrób wektory do Δ_k = exp(L[t+k]-L[t]) - 1 (szybkie O(1)). Zawsze UTC tz-aware."""
     global MIN_IDX, R_MINUTE, LOGF_PREFIX, MINUTE_TO_POS
-
     if prices_df.empty or "datetime" not in prices_df.columns:
         MIN_IDX = pd.DatetimeIndex([], tz="UTC")
         R_MINUTE = np.zeros((0,), dtype=float)
-        LOGF_PREFIX = np.zeros((1,), dtype=float)  # N+1
+        LOGF_PREFIX = np.zeros((1,), dtype=float)
         MINUTE_TO_POS = {}
         return
 
     df = prices_df.copy()
-
-    # 1) WYMUSZ tz-aware UTC na kolumnie datetime (nawet jeśli loader już to zrobił)
-    #    Jeśli naivem -> lokalizuj jako UTC; jeśli ma tz -> konwertuj do UTC.
     dt = pd.to_datetime(df["datetime"], errors="coerce", utc=False)
     try:
         has_tz = dt.dt.tz is not None
@@ -165,46 +145,31 @@ def _build_minute_buffers(prices_df: pd.DataFrame):
     df["minute"] = dt.dt.floor("min")
     df = df.sort_values("minute").drop_duplicates(subset=["minute"], keep="last").dropna(subset=["minute"])
 
-    # 2) preferowana kolumna % change (w %); jeśli brak, liczymy z 'open'
     cand_cols = ["% change", "%change", "pct change", "pct_change"]
     col = next((c for c in cand_cols if c in df.columns), None)
-
     if col is not None:
-        # 0.3677 => 0.3677% -> ułamek
         r = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=float) / 100.0
     else:
         o = pd.to_numeric(df["open"], errors="coerce").to_numpy(dtype=float)
         r = np.zeros_like(o)
         if o.size >= 2:
-            prev = o[:-1]
-            cur = o[1:]
+            prev = o[:-1]; cur = o[1:]
             rr = np.zeros_like(cur)
             mask = (prev > 0) & np.isfinite(prev) & np.isfinite(cur)
             rr[mask] = (cur[mask] / prev[mask]) - 1.0
             r[1:] = rr
 
-    # 3) Indeks minutowy (już jest tz-aware)
-    MIN_IDX = pd.DatetimeIndex(df["minute"].values)  # ma tz=UTC
-
-    # 4) Prefiks log(1+r)
+    MIN_IDX = pd.DatetimeIndex(df["minute"].values)
     one_plus = np.clip(1.0 + r, 1e-9, None)
     logf = np.log(one_plus)
-    LOGF_PREFIX = np.concatenate([[0.0], np.cumsum(logf)])  # N+1
-
-    # 5) Mapka minute -> pozycja
+    LOGF_PREFIX = np.concatenate([[0.0], np.cumsum(logf)])
     MINUTE_TO_POS = {int(ts.value): i for i, ts in enumerate(MIN_IDX)}
-
-    # 6) Zapisz r_t
     R_MINUTE = r
 
-
 def _pct_change_from_base(pos: int, k: int) -> float | None:
-    """Zwróć Δ_k (ułamek, np. 0.005 = 0.5%) dla pozycji 'pos' i horyzontu k."""
     j = pos + k
-    # LOGF_PREFIX ma N+1 elementów; pos+k <= N => j <= N
     if pos < 0 or j > len(LOGF_PREFIX) - 1:
         return None
-    # Δ = exp(L[pos+k] - L[pos]) - 1
     return float(np.exp(LOGF_PREFIX[j] - LOGF_PREFIX[pos]) - 1.0)
 
 def _pct_series_from_base(pos: int, horizons=(1,2,3,4,5,6,7,8,9,10,15,30,60)):
@@ -212,7 +177,6 @@ def _pct_series_from_base(pos: int, horizons=(1,2,3,4,5,6,7,8,9,10,15,30,60)):
 
 def percent_changes_from(start_dt_utc: pd.Timestamp,
                          intervals=(1,2,3,4,5,6,7,8,9,10,15,30,60)):
-    """Szybkie Δ% dla wybranych horyzontów względem minuty tweeta."""
     if MIN_IDX is None or len(MIN_IDX) == 0:
         return {k: None for k in intervals}
     minute = pd.Timestamp(start_dt_utc).floor("min")
@@ -222,7 +186,6 @@ def percent_changes_from(start_dt_utc: pd.Timestamp,
     return _pct_series_from_base(pos, intervals)
 
 def impact_at_minute(dt_utc: pd.Timestamp, minute: int):
-    """Δ% po 'minute' minutach (ułamek), z szybkim path-em."""
     if minute not in ALLOWED_IMPACT_MINUTES:
         return None
     if MIN_IDX is None or len(MIN_IDX) == 0:
@@ -238,24 +201,22 @@ def _label_for_change(val: float | None, thr: float) -> str:
     if val <= -thr/100.0:  return "down"
     return "neutral"
 
-# ===== Inicjalizacja =====
+# ===== Init =====
 TWEETS_DF = load_tweets()
 PRICES_DF = load_prices_from_dir()
 _build_minute_buffers(PRICES_DF)
 
-# ===== Precompute: etykiety bazowe =====
 def precompute_labels(df: pd.DataFrame, minute: int = PRE_MINUTE, thr: float = PRE_THRESHOLD) -> pd.DataFrame:
     print(f"[precompute] Liczę etykiety bazowe: m={minute}, próg={thr}%  (wiersze: {len(df)})")
     pct, lab = [], []
     for ts in df["created_at"]:
-        v = impact_at_minute(pd.Timestamp(ts), minute)  # ułamek
-        pct.append(None if v is None else round(100.0 * v, 4))  # na %
+        v = impact_at_minute(pd.Timestamp(ts), minute)
+        pct.append(None if v is None else round(100.0 * v, 4))
         lab.append(_label_for_change(v, thr))
     out = df.copy()
     out["pre_min"]   = int(minute)
-    out["pre_pct"]   = pct                 # w %
+    out["pre_pct"]   = pct
     out["pre_label"] = lab
-    # dla zgodności
     out["_lab_min"]   = out["pre_min"]
     out["_lab_pct"]   = out["pre_pct"]
     out["_lab_label"] = out["pre_label"]
@@ -264,7 +225,6 @@ def precompute_labels(df: pd.DataFrame, minute: int = PRE_MINUTE, thr: float = P
 if not TWEETS_DF.empty:
     TWEETS_DF = precompute_labels(TWEETS_DF, PRE_MINUTE, PRE_THRESHOLD)
 
-# ===== Trasy =====
 @app.route("/health")
 def health():
     return jsonify({
@@ -293,12 +253,8 @@ def api_tweets():
     year = request.args.get("year", "all")
     q = (request.args.get("q") or "").strip()
     label = (request.args.get("label", "all") or "all").lower()
-    # --- na początku api_tweets(), obok innych parametrów:
     imp_sort = int(request.args.get("imp_sort", 0) or 0)
 
-
-
-    # tryby etykietowania (0 = precompute, 1 = licz w locie wg lab-*)
     imp_filter = int(request.args.get("imp_filter", 0) or 0)
     try:
         imp_min = int(request.args.get("imp_min", PRE_MINUTE))
@@ -340,11 +296,11 @@ def api_tweets():
     if q:
         df = df[df["text"].str.contains(q, case=False, na=False)]
 
-    # Etykietowanie: albo precompute (pre_*), albo liczymy imp_* w locie (ułamek -> %)
+    # [NEW] licz w locie imp_*
     if imp_filter == 1:
         imp_pct, imp_lbl = [], []
         for ts in df["created_at"]:
-            v = impact_at_minute(pd.Timestamp(ts), imp_min)  # ułamek
+            v = impact_at_minute(pd.Timestamp(ts), imp_min)
             pct = None if v is None else (100.0 * v)
             imp_pct.append(None if pct is None else round(pct, 4))
             if v is None:
@@ -361,32 +317,57 @@ def api_tweets():
         df["_imp_pct"] = None
         df["_imp_label"] = None
 
-    # --- Filtr etykiety: użyj imp_* jeśli liczone w locie, inaczej pre_* (precompute)
+    # [NEW] filtr etykiety
     if label in ("up", "down", "neutral"):
         if imp_filter == 1:
-            # Upewnij się, że kolumna istnieje; jeśli nie — nic nie filtruj
             if "_imp_label" in df.columns:
                 df = df[df["_imp_label"] == label]
         else:
             if "pre_label" in df.columns:
                 df = df[df["pre_label"] == label]
 
-    # --- tuż po bloku filtrowania po etykiecie (po "if label in (...)" ...), a przed:
-    # total = len(df); start = ... (czyli PRZED paginacją!)
-
+    # [NEW] GLOBALNY SORT PRZED PAGINACJĄ
+    sort_col = None
     if imp_sort == 1 and label in ("up", "down"):
-        # wybieramy kolumnę do sortowania:
-        sort_col = None
         if imp_filter == 1 and "_imp_pct" in df.columns:
             sort_col = "_imp_pct"
         elif "pre_pct" in df.columns:
             sort_col = "pre_pct"
-
         if sort_col is not None:
-            asc = (label == "down")   # down: rosnąco, up: malejąco
-            df = df.sort_values(sort_col, ascending=asc, na_position="last")
+            asc = (label == "down")   # dla "down" rosnąco (bardziej ujemne na górze)
+            df = df.sort_values(sort_col, ascending=asc, na_position="last").reset_index(drop=True)
+            df["__rank"] = df.index + 1
+    else:
+        df = df.reset_index(drop=True)
+        df["__rank"] = pd.NA
 
+    # [NEW] STATYSTYKI (przed paginacją)
+    if imp_filter == 1 and "_imp_label" in df.columns:
+        col_lbl = "_imp_label"; col_pct = "_imp_pct"
+        minute_used = imp_min; threshold_used = imp_thr
+        mode = "imp"
+    else:
+        col_lbl = "pre_label" if "pre_label" in df.columns else None
+        col_pct = "pre_pct" if "pre_pct" in df.columns else None
+        minute_used = int(PRE_MINUTE); threshold_used = PRE_THRESHOLD
+        mode = "pre"
 
+    stats = {"n": int(len(df)), "mode": mode, "minute": minute_used,
+             "threshold": threshold_used, "label_filter": (label if label in ("up","down","neutral") else "all")}
+    if col_lbl is not None and col_lbl in df.columns:
+        stats.update({
+            "n_up": int((df[col_lbl] == "up").sum()),
+            "n_down": int((df[col_lbl] == "down").sum()),
+            "n_neutral": int((df[col_lbl] == "neutral").sum()),
+        })
+    if col_pct is not None and col_pct in df.columns:
+        s = pd.to_numeric(df[col_pct], errors="coerce").dropna()
+        stats.update({
+            "pct_min": (None if s.empty else float(round(s.min(), 4))),
+            "pct_max": (None if s.empty else float(round(s.max(), 4))),
+            "pct_mean": (None if s.empty else float(round(s.mean(), 4))),
+            "pct_median": (None if s.empty else float(round(s.median(), 4))),
+        })
 
     total = len(df)
     start = (page - 1) * per_page
@@ -398,16 +379,9 @@ def api_tweets():
 
     items = []
     for r in subset.itertuples(index=False):
-        # bezpieczne pobrania z domyślnymi wartościami
         txt = getattr(r, "text", "")
         created_display = getattr(r, "created_at_display", "")
         created_at_val = getattr(r, "created_at", None)
-        year_val = None
-        try:
-            year_val = int(pd.Timestamp(created_at_val).year) if created_at_val is not None else None
-        except Exception:
-            year_val = None
-
         is_reply   = bool(getattr(r, "isReply", False))
         is_retweet = bool(getattr(r, "isRetweet", False))
         is_quote   = bool(getattr(r, "isQuote", False))
@@ -427,6 +401,8 @@ def api_tweets():
         imp_pct = (None if imp_pct is None or (isinstance(imp_pct, float) and pd.isna(imp_pct)) else float(imp_pct))
         imp_min_out = imp_min if imp_filter == 1 else None
 
+        rank_val = getattr(r, "__rank", None)
+
         items.append({
             "tweet_id": str(getattr(r, "tweet_id", "")),
             "text": txt,
@@ -434,27 +410,29 @@ def api_tweets():
             "isReply": is_reply,
             "isRetweet": is_retweet,
             "isQuote": is_quote,
-            "year": year_val if year_val is not None else (int(pd.Timestamp(created_at_val).year) if created_at_val is not None else None),
 
-            # Precompute (jeśli są)
             "pre_label": pre_label,
             "pre_min":   (int(pre_min) if pre_min is not None else None),
             "pre_pct":   pre_pct,
 
-            # Zgodność wsteczna (lab_*)
             "lab_label": lab_label,
             "lab_min":   (int(lab_min) if lab_min is not None else None),
             "lab_pct":   lab_pct,
 
-            # Opcjonalnie imp_* (liczone w locie)
             "imp_label": imp_lbl,
             "imp_min":   imp_min_out,
             "imp_pct":   imp_pct,
+
+            "rank": (int(rank_val) if rank_val is not None and pd.notna(rank_val) else None),
         })
 
-
     years = sorted(TWEETS_DF["created_at"].dt.year.unique().tolist(), reverse=True) if len(TWEETS_DF) else []
-    return jsonify({"items": items, "page": page, "per_page": per_page, "total": int(total), "years": years})
+    return jsonify({
+        "items": items,
+        "page": page, "per_page": per_page, "total": int(total),
+        "years": years,
+        "stats": stats
+    })
 
 # ---- API: pojedynczy tweet ----
 @app.route("/api/tweet/<tweet_id>")
@@ -508,7 +486,6 @@ def api_price():
 
     win_start = start_dt - pd.Timedelta(minutes=pre)
     win_end   = start_dt + pd.Timedelta(minutes=minutes)
-    # Uwaga: tutaj nadal zwracamy surowe punkty z PRICES_DF (dla wykresu)
     df = PRICES_DF[(PRICES_DF["datetime"] >= win_start) & (PRICES_DF["datetime"] <= win_end)].copy()
     reason = "ok" if not df.empty else "no_data"
 
@@ -520,8 +497,7 @@ def api_price():
         "close": float(r["close"]),
     } for _, r in df.iterrows()]
 
-    # Δ z fast-path jest w UŁAMKU -> przeskaluj do % dla spójności z pre_pct
-    pc_raw = percent_changes_from(start_dt)  # {k: fraction or None}
+    pc_raw = percent_changes_from(start_dt)
     pct_changes = {k: (None if v is None else round(100.0 * v, 2)) for k, v in pc_raw.items()}
 
     payload = {
@@ -534,8 +510,6 @@ def api_price():
         "pct_changes": pct_changes
     }
 
-
-    # siatka do overlay
     if request.args.get("grid", "0") == "1":
         grid_start = pd.Timestamp(win_start).floor("min")
         grid_end   = pd.Timestamp(win_end).floor("min")
@@ -559,7 +533,6 @@ def api_price():
     if fmt != "text":
         return jsonify(payload)
 
-    # legacy: tekst
     legacy_start = pd.Timestamp(win_start).floor("min")
     legacy_end   = pd.Timestamp(win_end).floor("min")
     legacy_idx = pd.date_range(start=legacy_start, end=legacy_end, freq="1min", tz="UTC")
@@ -595,6 +568,7 @@ def api_price():
     return (body, 200, {"Content-Type": "text/plain; charset=utf-8"})
 
 if __name__ == "__main__":
-    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # świeży app.js w debug
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
     app.run(debug=True)
+
 
