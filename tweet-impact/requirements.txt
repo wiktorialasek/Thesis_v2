@@ -2,3 +2,11 @@ Flask==3.0.3
 pandas==2.2.2
 python-dateutil==2.9.0.post0
 plotly==5.24.1
+# Flask>=3.0
+# pandas>=2.2
+numpy>=1.26
+# plotly>=5.22
+joblib>=1.4
+scikit-learn>=1.4
+pyarrow>=16.0
+python-dateutil>=2.9
