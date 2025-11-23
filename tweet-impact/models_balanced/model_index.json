@@ -1,4 +1,4 @@
 {
-  "1": "/content/drive/MyDrive/THESIS/models_balanced/logreg_bal_1m.pkl",
-  "5": "/content/drive/MyDrive/THESIS/models_balanced/logreg_bal_5m.pkl"
+  "1": "logreg_bal_1m.pkl",
+  "5": "logreg_bal_5m.pkl"
 }
