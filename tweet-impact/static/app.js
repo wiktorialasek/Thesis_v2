@@ -22,9 +22,15 @@ function toLocal(tsSec){ return new Date(tsSec * 1000); }
 
 // ===== UI state =====
 const state = {
-  page: 1, per_page: 20,
-  year: 'all', reply: 0, retweet: 0, quote: 0, q: '',
-  total: 0, years: [],
+  page: 1,
+  per_page: 20,
+  year: 'all',
+  reply: 0,
+  retweet: 0,
+  quote: 0,
+  q: '',
+  total: 0,
+  years: [],
 
   windowMinutes: 15,
   currentTweetId: null,
@@ -37,27 +43,39 @@ const state = {
 
   selected: new Set(),
   label: 'all',
-  sortByChange: false
+  sortByChange: false,
+
+  mlTestOnly: 0        // filtr: tylko tweety z testu FinBERT
 };
-const DEFAULT_PER_PAGE = 20; // [NEW]
+
+const DEFAULT_PER_PAGE = 20;
 let __reqEpoch = 0;
 let io;
 let isLoading = false;
 
-// [NEW] wypełnianie KPI w nagłówku
+// ===== KPI w nagłówku =====
 function renderTopKpis(st){
   const fmt = v => (v==null || !isFinite(v)) ? '—' : (Number(v).toFixed(2)+'%');
-  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
 
-  if(!st){ set('k-n','—'); set('k-up','—'); set('k-down','—'); set('k-neutral','—'); set('k-min','—'); set('k-med','—'); set('k-avg','—'); set('k-max','—'); return; }
+  if(!st){
+    set('k-n','—');
+    set('k-up','—');
+    set('k-down','—');
+    set('k-neutral','—');
+    set('k-min','—');
+    set('k-max','—');
+    return;
+  }
 
   set('k-n', String(st.n ?? '—'));
   set('k-up', String(st.n_up ?? '—'));
   set('k-down', String(st.n_down ?? '—'));
   set('k-neutral', String(st.n_neutral ?? '—'));
   set('k-min', fmt(st.pct_min));
-  set('k-med', fmt(st.pct_median));
-  set('k-avg', fmt(st.pct_mean));
   set('k-max', fmt(st.pct_max));
 
   const mode = document.getElementById('k-mode');
@@ -75,7 +93,7 @@ function renderTopKpis(st){
   }
 }
 
-// ===== RENDER: list =====
+// ===== LISTA TWEETÓW =====
 async function loadFiltersAndList({reset=false, initial=false} = {}){
   if (isLoading) return;
   isLoading = true;
@@ -91,12 +109,18 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
   }
 
   const params = {
-    page: state.page, per_page: state.per_page,
-    year: state.year, reply: state.reply, retweet: state.retweet, quote: state.quote, q: state.q,
-    label: state.label
+    page: state.page,
+    per_page: state.per_page,
+    year: state.year,
+    reply: state.reply,
+    retweet: state.retweet,
+    quote: state.quote,
+    q: state.q,
+    label: state.label,
+    ml_test: state.mlTestOnly
   };
 
-  // [NEW] sort globalny – backend
+  // sort po największej zmianie – po stronie backendu
   if (state.sortByChange && (state.label === 'up' || state.label === 'down')) {
     params.imp_sort = 1;
     params.year = 'all';
@@ -117,15 +141,17 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
   const data = await apiList(params);
   if (myEpoch !== __reqEpoch) { isLoading = false; return; }
 
-  // [NEW] KPI w nagłówku
   renderTopKpis(data.stats);
 
-  // years select (raz)
+  // lata – tylko raz
   if(!state.years.length && Array.isArray(data.years)){
     state.years = data.years;
     const sel = document.getElementById('f-year');
     state.years.forEach(y=>{
-      const opt = document.createElement('option'); opt.value = String(y); opt.textContent = y; sel.appendChild(opt);
+      const opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = y;
+      sel.appendChild(opt);
     });
   }
 
@@ -133,7 +159,7 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
 
   const list = document.getElementById('list');
   const frag = document.createDocumentFragment();
-  const itemsForRender = (data.items || []).slice();  // [NEW] bez dodatkowego filtrowania w kliencie!
+  const itemsForRender = (data.items || []).slice();
 
   if(itemsForRender.length === 0){
     const empty = document.createElement('div');
@@ -146,7 +172,6 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
       row.className = 'row';
       row.dataset.id = item.tweet_id;
 
-      // [NEW] własny tooltip zamiast napisu m=…, Δ=…
       const minute = (item.imp_min != null ? item.imp_min : (item.pre_min ?? item.lab_min));
       const pct    = (item.imp_pct != null ? item.imp_pct : (item.pre_pct ?? item.lab_pct));
       const metaText = (minute != null) ? `m=${minute}, Δ=${pct == null ? '—' : (Number(pct).toFixed(2)+'%')}` : '';
@@ -170,6 +195,7 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
             <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
               ${pill}
               ${rankBadge}
+              ${item.is_ml_test ? '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">ML test</span>' : ''}
             </div>
           </div>
           <label class="check" style="white-space:nowrap">
@@ -208,33 +234,128 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
   isLoading = false;
 }
 
-// ===== DETAIL + CHART =====
+// ===== SZCZEGÓŁ TWEETA + ANALIZA =====
 async function openDetail(tweetId){
   const detail = document.getElementById('detail');
   const minuteList = document.getElementById('minute-list');
   detail.innerHTML = '<div class="muted">Ładowanie…</div>';
-  Plotly.purge('chart'); minuteList.textContent = '—';
+  Plotly.purge('chart');
+  if (minuteList) minuteList.textContent = '—';
 
   try{
     const t = await apiTweet(tweetId);
+    const isMlTest = !!t.is_ml_test;
+
+    let tagsHtml = '';
+    if (t.isReply)   tagsHtml += '<span class="pill">reply</span>';
+    if (t.isRetweet) tagsHtml += '<span class="pill">retweet</span>';
+    if (t.isQuote)   tagsHtml += '<span class="pill">quote</span>';
+    if (isMlTest)    tagsHtml += '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">ML test</span>';
+
+    let llmHtml = '';
+    if (isMlTest) {
+      const quoteHtml = (t.isQuote && t.combined_quote_info)
+        ? `<div style="margin-top:8px;padding:8px 10px;border-left:3px solid #e5e7eb;background:#f9fafb;font-size:13px">
+             <div class="muted" style="font-size:11px;margin-bottom:4px">Treść cytowanego tweeta:</div>
+             ${escapeHtml(t.combined_quote_info || '')}
+           </div>`
+        : '';
+
+      const drivers   = (t.llm_drivers || '').toString();
+      const rationale = (t.llm_rationale || '').toString();
+
+      const predLabel     = t.pred_label_str || '—';
+      const trueLabel     = t.label_str || '—';
+      const tradeDecision = t.trade_decision || 'hold';
+      const after3        = (t.after_3m != null) ? `${Number(t.after_3m).toFixed(2)}%` : '—';
+
+      llmHtml = `
+        ${quoteHtml}
+        <div style="margin-top:10px;padding:10px;border-radius:14px;border:1px solid #e5e7eb;background:#f9fafb">
+          <div style="font-weight:600;margin-bottom:6px">Analiza LLM</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:4px 12px;font-size:13px;">
+            <div class="muted">about TSLA:</div>
+            <div><strong>${t.llm_about_tsla ? 'tak' : 'nie'}</strong></div>
+
+            <div class="muted">sent_tweet:</div>
+            <div><strong>${escapeHtml(t.llm_sent_tweet || '')}</strong></div>
+
+            <div class="muted">sent_quote:</div>
+            <div><strong>${escapeHtml(t.llm_sent_quote || '')}</strong></div>
+
+            <div class="muted">stance:</div>
+            <div><strong>${escapeHtml(t.llm_stance || '')}</strong></div>
+
+            <div class="muted">impact:</div>
+            <div><strong>${escapeHtml(t.llm_impact || '')}</strong></div>
+
+            <div class="muted">sarcasm:</div>
+            <div><strong>${t.llm_sarcasm ? 'tak' : 'nie'}</strong></div>
+
+            <div class="muted">conf:</div>
+            <div><strong>${t.llm_conf != null ? Number(t.llm_conf).toFixed(2) : '—'}</strong></div>
+          </div>
+
+          <div class="muted" style="font-size:13px;margin-top:6px">
+            drivers: ${escapeHtml(drivers)}
+          </div>
+
+          <details style="margin-top:6px;font-size:13px">
+            <summary class="muted">Uzasadnienie modelu LLM (rationale)</summary>
+            <div style="margin-top:4px;white-space:pre-wrap">${escapeHtml(rationale)}</div>
+          </details>
+        </div>
+
+        <div style="margin-top:10px;padding:10px;border-radius:14px;background:#f3f4ff;border:1px solid #e0e7ff">
+          <div style="font-weight:600;margin-bottom:4px">FinBERT – kierunek w 3 min</div>
+          <div style="font-size:13px;line-height:1.5">
+            Predykcja modelu: <strong>${predLabel}</strong><br/>
+            Rzeczywisty kierunek (avg1_3): <strong>${trueLabel}</strong><br/>
+            Decyzja tradingowa: <strong>${tradeDecision}</strong><br/>
+            Rzeczywista zmiana po 3 min: <strong>${after3}</strong>
+          </div>
+        </div>
+      `;
+    }
+
     detail.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-        <div>
+        <div style="flex:1;min-width:0">
           <div class="muted" style="font-size:12px">${t.created_display}</div>
           <div style="margin-top:4px">${escapeHtml(t.text || '')}</div>
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-            ${t.isReply ? '<span class="pill">reply</span>' : ''}
-            ${t.isRetweet ? '<span class="pill">retweet</span>' : ''}
-            ${t.isQuote ? '<span class="pill">quote</span>' : ''}
+            ${tagsHtml}
           </div>
+          ${llmHtml}
         </div>
-        <div class="muted">Tweet #${t.tweet_id}</div>
+        <div class="muted" style="white-space:nowrap">Tweet #${t.tweet_id}</div>
       </div>
+      ${isMlTest ? `
+        <div style="margin-top:10px">
+          <button id="btn-show-chart" class="btn" type="button">Pokaż wykres</button>
+          <span class="muted" style="font-size:12px;margin-left:6px">Wykres ładowany na żądanie dla tweetów testowych.</span>
+        </div>` : ''}
     `;
+
     state.currentTweetId = tweetId;
 
-    const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
-    renderPctList(payload.pct_changes);
+    if (isMlTest) {
+      const btn = document.getElementById('btn-show-chart');
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          try {
+            const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
+            renderPctList(payload.pct_changes);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+    } else {
+      const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
+      renderPctList(payload.pct_changes);
+    }
+
   } catch(e) {
     console.error(e);
     detail.innerHTML = '<div class="muted">Błąd wczytywania tweeta.</div>';
@@ -242,6 +363,7 @@ async function openDetail(tweetId){
   }
 }
 
+// ===== WYKRES CEN =====
 async function renderChart(startUnix, minutes, pre){
   const payload = await apiPrice(startUnix, minutes, pre);
   const pts = payload.points || [];
@@ -349,6 +471,7 @@ async function renderOverlay(){
   }, {responsive:true});
 }
 
+// ===== LISTA ZMIAN % =====
 function renderPctList(pct){
   const minuteList = document.getElementById('minute-list');
   if(!pct){ minuteList.textContent = 'Brak danych.'; return; }
@@ -363,7 +486,11 @@ function renderPctList(pct){
 }
 
 // ===== utils =====
-function escapeHtml(s){ return (s||'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+function escapeHtml(s){
+  return (s||'').replace(/[&<>"']/g,m=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
 
 function setupInfiniteScroll(){
   const sentinel = document.getElementById('sentinel');
@@ -409,6 +536,8 @@ window.addEventListener('DOMContentLoaded', ()=>{
     state.quote   = document.getElementById('f-quote').checked ? -1 : 0;
     const labSel = document.getElementById('f-label');
     if (labSel) state.label = labSel.value || 'all';
+    const mlChk = document.getElementById('f-ml-test');
+    state.mlTestOnly = (mlChk && mlChk.checked) ? 1 : 0;
   };
 
   document.getElementById('btn-search').addEventListener('click', ()=>{
@@ -418,12 +547,24 @@ window.addEventListener('DOMContentLoaded', ()=>{
       state.sortByChange = false;
       const btnSort = document.getElementById('btn-sort');
       if (btnSort) btnSort.classList.remove('primary');
-      state.per_page = DEFAULT_PER_PAGE; // [NEW]
+      state.per_page = DEFAULT_PER_PAGE;
     }
     loadFiltersAndList({reset:true});
   });
 
-  document.getElementById('f-q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('btn-search').click(); });
+  document.getElementById('f-q').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter') document.getElementById('btn-search').click();
+  });
+
+  // zmiana filtra "zbiór testowy" – od razu przeładowanie
+  const mlChk = document.getElementById('f-ml-test');
+  if (mlChk) {
+    mlChk.addEventListener('change', ()=>{
+      state.mlTestOnly = mlChk.checked ? 1 : 0;
+      state.page = 1;
+      loadFiltersAndList({reset:true});
+    });
+  }
 
   document.getElementById('btn-label-apply').addEventListener('click', ()=>{
     state.impMin = parseInt(document.getElementById('lab-min').value || '8', 10);
@@ -489,10 +630,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
     state.label = (picks.length === 1 ? picks[0] : 'all');
 
-    // jeśli filtr up/down – licz po znaku (pusty próg)
     if (state.label === 'up' || state.label === 'down') {
       state.useImp = 1;
-      state.impThr = ''; // [NEW] => backend wejdzie w tryb "tylko znak"
+      state.impThr = ''; // tryb „tylko znak”
     }
 
     state.page = 1;
@@ -500,7 +640,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
   }
   [ckUp, ckDn, ckNe].forEach(el=>{ if (el) el.addEventListener('change', applyLabelCheckboxes); });
 
-  // sort biggest change
+  // sort by biggest change
   const btnSort = document.getElementById('btn-sort');
   if (btnSort) {
     btnSort.addEventListener('click', () => {
@@ -514,7 +654,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
         state.per_page = Math.max(state.per_page, 300);
         state.page = 1;
       } else {
-        state.per_page = DEFAULT_PER_PAGE; // [NEW] powrót do normalnej paginacji
+        state.per_page = DEFAULT_PER_PAGE;
         state.page = 1;
       }
       loadFiltersAndList({reset:true});
@@ -525,4 +665,3 @@ window.addEventListener('DOMContentLoaded', ()=>{
   loadFiltersAndList({reset:true, initial:true});
   setupInfiniteScroll();
 });
-

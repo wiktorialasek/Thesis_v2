@@ -28,40 +28,59 @@
       <button id="btn-search" class="btn">Szukaj</button>
     </div>
 
+    <!-- Etykietowanie (rozwijane) -->
     <div class="card" style="padding:10px;margin-bottom:10px">
-      <div style="margin-bottom:6px">
-        <strong>Etykietowanie</strong>
-      </div>
-      <div class="filters" style="margin-bottom:8px">
-        <div>
-          <label>Minuta etykietowania</label>
-          <select id="lab-min">
-            {% for m in range(1,21) %}<option value="{{m}}" {{ 'selected' if m==8 else '' }}>{{m}}</option>{% endfor %}
-            <option value="30">30</option>
-            <option value="60">60</option>
-          </select>
+      <details class="filter" open>
+        <summary>Etykietowanie</summary>
+        <div class="filter-inner">
+          <div class="filters" style="margin-bottom:8px">
+            <div>
+              <label>Minuta etykietowania</label>
+              <select id="lab-min">
+                {% for m in range(1,21) %}<option value="{{m}}" {{ 'selected' if m==8 else '' }}>{{m}}</option>{% endfor %}
+                <option value="30">30</option>
+                <option value="60">60</option>
+              </select>
+            </div>
+            <div>
+              <label>Próg % dla etykiety</label>
+              <input id="lab-thr" type="number" step="0.1" min="0" value="1" />
+            </div>
+          </div>
+          <button id="btn-label-apply" class="btn primary" type="button">Nadaj etykiety</button>
         </div>
-        <div>
-          <label>Próg % dla etykiety</label>
-          <input id="lab-thr" type="number" step="0.1" min="0" value="1" />
-        </div>
-      </div>
-      <button id="btn-label-apply" class="btn primary" type="button">Nadaj etykiety</button>
+      </details>
     </div>
 
+    <!-- Filtr: kierunek (rozwijane) -->
     <div class="card" style="padding:10px;margin:10px 0">
-      <div style="margin-bottom:6px"><strong>Filtr: kierunek</strong></div>
-      <div class="checks">
-        <label class="check"><input id="f-up" type="checkbox" /> up</label>
-        <label class="check"><input id="f-down" type="checkbox" /> down</label>
-        <label class="check"><input id="f-neutral" type="checkbox" /> neutral</label>
-      </div>
-      <div style="margin: 6px 0 12px; display:flex; gap:8px; flex-wrap:wrap">
-        <button id="btn-sort" class="btn">Sort by biggest change</button>
-      </div>
+      <details class="filter" open>
+        <summary>Filtr: kierunek</summary>
+        <div class="filter-inner">
+          <div class="checks">
+            <label class="check"><input id="f-up" type="checkbox" /> up</label>
+            <label class="check"><input id="f-down" type="checkbox" /> down</label>
+            <label class="check"><input id="f-neutral" type="checkbox" /> neutral</label>
+          </div>
+          <div style="margin: 6px 0 0; display:flex; gap:8px; flex-wrap:wrap">
+            <button id="btn-sort" class="btn">Sort by biggest change</button>
+          </div>
+        </div>
+      </details>
     </div>
 
-    <!-- [NEW] usuwamy stary, „długi” tekst statystyk – KPI jest w headerze -->
+    <!-- Filtr: zbiór testowy modelu (rozwijane) -->
+    <div class="card" style="padding:10px;margin:10px 0">
+      <details class="filter" open>
+        <summary>Filtr: zbiór testowy modelu</summary>
+        <div class="filter-inner">
+          <label class="check">
+            <input id="f-ml-test" type="checkbox" />
+            tylko tweety użyte w teście FinBERT
+          </label>
+        </div>
+      </details>
+    </div>
 
     <div id="list" class="list" aria-live="polite"></div>
     <div id="sentinel" class="muted" style="text-align:center;padding:10px">Loading…</div>

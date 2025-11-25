@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+  <div class="card pane">
+    <h2 style="margin-top:0;margin-bottom:10px;font-size:16px;">Backtest strategii FinBERT</h2>
+
+    <div style="margin-bottom:10px;">
+      <a href="{{ url_for('index') }}" class="btn" style="font-size:12px;">&larr; Powrót do analizy</a>
+    </div>
+
+    {% if error %}
+      <div class="card" style="padding:10px;margin-bottom:10px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="get" action="{{ url_for('backtest_page') }}" style="display:grid;gap:10px;max-width:360px;">
+      <div>
+        <label class="muted" style="font-size:12px;">Data od</label>
+        <input type="date" name="start" value="{{ start or '' }}" min="{{ min_date or '' }}" max="{{ max_date or '' }}" />
+      </div>
+      <div>
+        <label class="muted" style="font-size:12px;">Data do</label>
+        <input type="date" name="end" value="{{ end or '' }}" min="{{ min_date or '' }}" max="{{ max_date or '' }}" />
+      </div>
+      <div>
+        <label class="muted" style="font-size:12px;">Budżet początkowy</label>
+        <input type="number" step="100" min="0" name="budget" value="{{ budget or 10000 }}" />
+      </div>
+      <div>
+        <button class="btn primary" type="submit">Uruchom backtest</button>
+      </div>
+    </form>
+
+    {% if summary %}
+      <div class="card" style="margin-top:16px;padding:10px;">
+        <h3 style="margin-top:0;margin-bottom:8px;font-size:15px;">Podsumowanie</h3>
+        <div class="muted" style="font-size:13px;">
+          Okres: <strong>{{ summary.start_str }} – {{ summary.end_str }}</strong><br/>
+          Liczba transakcji: <strong>{{ summary.n_trades }}</strong>
+          (buy: {{ summary.n_buy }}, sell: {{ summary.n_sell }})<br/>
+          Kapitał początkowy: <strong>{{ "%.2f"|format(summary.initial) }}</strong><br/>
+          Kapitał końcowy: <strong>{{ "%.2f"|format(summary.final) }}</strong><br/>
+          Zwrot: <strong>{{ "%.2f"|format(summary.return_pct) if summary.return_pct is not none else "—" }}%</strong>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card pane">
+    <h3 style="margin-top:0;margin-bottom:8px;font-size:15px;">Transakcje</h3>
+    {% if trades and trades|length > 0 %}
+      <div style="max-height:calc(100vh - 150px);overflow:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:#f9fafb;">
+              <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:left;">Czas</th>
+              <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:left;">Tweet</th>
+              <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:left;">Decyzja</th>
+              <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:right;">Δ po 3m</th>
+              <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:right;">Kapitał →</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in trades %}
+              <tr>
+                <td style="padding:6px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">{{ t.created_at }}</td>
+                <td style="padding:6px;border-bottom:1px solid #f1f5f9;">
+                  <div style="font-weight:500;">#{{ t.tweet_id }}</div>
+                  <div style="color:#4b5563;">{{ t.text }}</div>
+                  <div class="muted" style="margin-top:2px;">
+                    model: {{ t.pred_label or '—' }}, real: {{ t.true_label or '—' }}
+                  </div>
+                </td>
+                <td style="padding:6px;border-bottom:1px solid #f1f5f9;">
+                  {{ t.decision }}
+                </td>
+                <td style="padding:6px;border-bottom:1px solid #f1f5f9;text-align:right;">
+                  {{ "%.2f"|format(t.raw_ret) }}%
+                </td>
+                <td style="padding:6px;border-bottom:1px solid #f1f5f9;text-align:right;">
+                  {{ "%.2f"|format(t.capital_before) }} → {{ "%.2f"|format(t.capital_after) }}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="muted" style="font-size:13px;">Brak transakcji w wybranym okresie.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

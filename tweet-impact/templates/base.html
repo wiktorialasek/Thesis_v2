@@ -9,7 +9,7 @@
     *{box-sizing:border-box}
     body{margin:0;background:var(--bg);color:#111;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
     header{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:3}
-    /* [NEW] nagłówek w 2 kolumnach: tytuł + KPI */
+    /* nagłówek w 2 kolumnach: tytuł + KPI */
     .hdr{display:grid;grid-template-columns: 1fr auto;gap:12px;align-items:center}
     h1{margin:0;font-size:18px}
     .layout{display:grid;grid-template-columns: 360px 1fr; gap:16px; padding:16px}
@@ -37,22 +37,40 @@
     #chart{height:420px}
     pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px}
 
-    /* [NEW] KPI pasek w nagłówku */
+    /* KPI pasek w nagłówku */
     .kpis{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .kchip{padding:.18rem .55rem;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:12px}
     .kchip.up{background:#ecfdf5;color:#065f46;border-color:#bbf7d0}
     .kchip.down{background:#fef2f2;color:#991b1b;border-color:#fecaca}
     .kchip.neutral{background:#f3f4f6;color:#111}
+
+    /* rozwijane sekcje filtrów */
+    details.filter{padding:4px 0;}
+    details.filter > summary{
+      list-style:none;
+      cursor:pointer;
+      font-weight:600;
+      font-size:13px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+    }
+    details.filter > summary::-webkit-details-marker{display:none;}
+    details.filter .filter-inner{margin-top:6px;}
   </style>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" defer></script>
-  <!-- [NEW] bump wersji aby przeglądarka ściągnęła świeży JS -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=2025-10-23-kpi" defer></script>
+  <!-- bump wersji aby przeglądarka ściągnęła świeży JS -->
+  <script src="{{ url_for('static', filename='app.js') }}?v=2025-11-23-llm" defer></script>
 </head>
 <body>
   <header>
     <div class="hdr">
-      <h1>Tweet Impact Analyzer</h1>
-      <!-- [NEW] KPI w nagłówku (wypełnia JS) -->
+      <div style="display:flex;align-items:center;gap:8px;">
+        <h1 style="margin:0;">Tweet Impact Analyzer</h1>
+        <a href="{{ url_for('index') }}" class="btn" style="font-size:12px;">Analiza</a>
+        <a href="{{ url_for('backtest_page') }}" class="btn" style="font-size:12px;">Backtest</a>
+      </div>
+      <!-- KPI -->
       <div id="top-kpis" class="kpis" aria-live="polite">
         <span class="kchip">Wyniki: <strong id="k-n">—</strong></span>
         <span class="kchip up">up: <strong id="k-up">—</strong></span>
@@ -65,8 +83,7 @@
       </div>
     </div>
   </header>
+
   {% block content %}{% endblock %}
 </body>
 </html>
-
-
