@@ -445,7 +445,10 @@ async function renderOverlay(){
       for (let i=0;i<minutesTs.length;i++){
         const v = closes[i];
         if (v == null) continue;
-        const offsetMin = (minutesTs[i] - baseTs)/60;
+
+        // przesunięcie wykresu o 1 minutę w lewo
+        const offsetMin = (minutesTs[i] - baseTs)/60 + 1;
+
         xs.push(offsetMin);
         ys.push((v/base - 1)*100);
       }
@@ -454,14 +457,35 @@ async function renderOverlay(){
       const left = -pre, right = mins;
       for (let i=0;i<xs.length;i++){
         if (xs[i] >= left && xs[i] <= right){
-          xFilt.push(xs[i]); yFilt.push(ys[i]);
+          xFilt.push(xs[i]);
+          yFilt.push(ys[i]);
         }
       }
-      if (xFilt.length) traces.push({ x: xFilt, y: yFilt, mode:'lines', name: `#${id}`, line:{width:1} });
-    }catch(_){}
+
+      // === WYRÓWNANIE DO (0,0) ===
+      const zeroIdx = xFilt.indexOf(0);   // szukamy punktu minuty tweeta
+      if (zeroIdx >= 0) {
+        const shift = yFilt[zeroIdx];
+        for (let i = 0; i < yFilt.length; i++) {
+          yFilt[i] -= shift;              // przesunięcie pionowe tak, aby y=0 w x=0
+        }
+      }
+
+      if (xFilt.length) traces.push({
+        x: xFilt,
+        y: yFilt,
+        mode:'lines',
+        name: `#${id}`,
+        line:{width:1}
+      });
+
+    } catch(_){}
   }
 
-  if(!traces.length){ Plotly.purge('overlay'); return; }
+  if(!traces.length){
+    Plotly.purge('overlay');
+    return;
+  }
 
   Plotly.newPlot('overlay', traces, {
     margin:{l:40,r:20,t:30,b:40},
