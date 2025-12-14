@@ -195,7 +195,7 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
             <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
               ${pill}
               ${rankBadge}
-              ${item.is_ml_test ? '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">ML test</span>' : ''}
+              ${item.is_ml_test ? '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">test</span>' : ''}
             </div>
           </div>
           <label class="check" style="white-space:nowrap">
@@ -238,95 +238,121 @@ async function loadFiltersAndList({reset=false, initial=false} = {}){
 async function openDetail(tweetId){
   const detail = document.getElementById('detail');
   const minuteList = document.getElementById('minute-list');
+
   detail.innerHTML = '<div class="muted">Ładowanie…</div>';
   Plotly.purge('chart');
   if (minuteList) minuteList.textContent = '—';
 
   try{
     const t = await apiTweet(tweetId);
+
     const isMlTest = !!t.is_ml_test;
+    const hasXgb =
+      !!t.is_xgb_test ||
+      t.xgb_pred_label_str != null ||
+      t.xgb_trade_decision != null ||
+      t.xgb_after_3m != null ||
+      t.xgb_label_str != null;
 
     let tagsHtml = '';
-    if (t.isReply)   tagsHtml += '<span class="pill">reply</span>';
+    if (t.isReply) tagsHtml += '<span class="pill">reply</span>';
     if (t.isRetweet) tagsHtml += '<span class="pill">retweet</span>';
-    if (t.isQuote)   tagsHtml += '<span class="pill">quote</span>';
-    if (isMlTest)    tagsHtml += '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">ML test</span>';
+    if (t.isQuote) tagsHtml += '<span class="pill">quote</span>';
+    if (isMlTest) tagsHtml += '<span class="pill" style="background:#fef3c7;color:#92400e;border:1px solid #facc15">test</span>';
+    // if (hasXgb) tagsHtml += '<span class="pill" style="background:#dcfce7;color:#166534;border:1px solid #bbf7d0">XGB</span>';
 
+    // ===== KAFELKI MODELI (FinBERT + XGBoost) =====
+    let modelCardsHtml = '';
+    if (isMlTest || hasXgb) {
+      // FinBERT
+      const predLabel = t.pred_label_str || '—';
+      const trueLabel = t.label_str || '—';
+      const tradeDecision = t.trade_decision || '—';
+      const after3 = (t.after_3m != null) ? `${Number(t.after_3m).toFixed(2)}%` : '—';
+
+      const finCard = isMlTest ? `
+        <div style="padding:10px;border-radius:14px;background:#f3f4ff;border:1px solid #e0e7ff;height:100%">
+          <div style="font-weight:600;margin-bottom:4px">FinBERT – kierunek w 3 min</div>
+          <div style="font-size:13px;line-height:1.5">
+            Predykcja modelu: <strong>${escapeHtml(String(predLabel))}</strong><br/>
+            Rzeczywisty kierunek (avg1_3): <strong>${escapeHtml(String(trueLabel))}</strong><br/>
+            Decyzja tradingowa: <strong>${escapeHtml(String(tradeDecision))}</strong><br/>
+            Rzeczywista zmiana po 3 min: <strong>${after3}</strong>
+          </div>
+        </div>
+      ` : '';
+
+      // XGBoost
+      const xgbPred = t.xgb_pred_label_str || '—';
+      const xgbTrue = t.xgb_label_str || '—';
+      const xgbDecision = t.xgb_trade_decision || '—';
+      const xgbAfter3 = (t.xgb_after_3m != null) ? `${Number(t.xgb_after_3m).toFixed(2)}%` : '—';
+
+      const xgbCard = hasXgb ? `
+        <div style="padding:10px;border-radius:14px;background:#f0fdf4;border:1px solid #bbf7d0;height:100%">
+          <div style="font-weight:600;margin-bottom:4px">XGBoost – kierunek w 3 min</div>
+          <div style="font-size:13px;line-height:1.5">
+            Predykcja modelu: <strong>${escapeHtml(String(xgbPred))}</strong><br/>
+            Rzeczywisty kierunek: <strong>${escapeHtml(String(xgbTrue))}</strong><br/>
+            Decyzja tradingowa: <strong>${escapeHtml(String(xgbDecision))}</strong><br/>
+            Rzeczywista zmiana po 3 min: <strong>${xgbAfter3}</strong>
+          </div>
+        </div>
+      ` : '';
+
+      modelCardsHtml = `
+        <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;align-items:stretch">
+          ${finCard}
+          ${xgbCard}
+        </div>
+      `;
+    }
+
+    // ===== LLM (tylko dla ML test, bo tylko wtedy masz te pola) =====
     let llmHtml = '';
     if (isMlTest) {
-      const quoteHtml = (t.isQuote && t.combined_quote_info)
-        ? `<div style="margin-top:8px;padding:8px 10px;border-left:3px solid #e5e7eb;background:#f9fafb;font-size:13px">
-             <div class="muted" style="font-size:11px;margin-bottom:4px">Treść cytowanego tweeta:</div>
-             ${escapeHtml(t.combined_quote_info || '')}
-           </div>`
-        : '';
+      const quoteHtml = (t.isQuote && t.combined_quote_info) ? `
+        <div style="margin-top:8px;padding:8px 10px;border-left:3px solid #e5e7eb;background:#f9fafb;font-size:13px">
+          <div class="muted" style="font-size:11px;margin-bottom:4px">Treść cytowanego tweeta:</div>
+          ${escapeHtml(t.combined_quote_info || '')}
+        </div>
+      ` : '';
 
-      const drivers   = (t.llm_drivers || '').toString();
+      const drivers = (t.llm_drivers || '').toString();
       const rationale = (t.llm_rationale || '').toString();
-
-      const predLabel     = t.pred_label_str || '—';
-      const trueLabel     = t.label_str || '—';
-      const tradeDecision = t.trade_decision || 'hold';
-      const after3        = (t.after_3m != null) ? `${Number(t.after_3m).toFixed(2)}%` : '—';
 
       llmHtml = `
         ${quoteHtml}
         <div style="margin-top:10px;padding:10px;border-radius:14px;border:1px solid #e5e7eb;background:#f9fafb">
           <div style="font-weight:600;margin-bottom:6px">Analiza LLM</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:4px 12px;font-size:13px;">
-            <div class="muted">about TSLA:</div>
-            <div><strong>${t.llm_about_tsla ? 'tak' : 'nie'}</strong></div>
-
-            <div class="muted">sent_tweet:</div>
-            <div><strong>${escapeHtml(t.llm_sent_tweet || '')}</strong></div>
-
-            <div class="muted">sent_quote:</div>
-            <div><strong>${escapeHtml(t.llm_sent_quote || '')}</strong></div>
-
-            <div class="muted">stance:</div>
-            <div><strong>${escapeHtml(t.llm_stance || '')}</strong></div>
-
-            <div class="muted">impact:</div>
-            <div><strong>${escapeHtml(t.llm_impact || '')}</strong></div>
-
-            <div class="muted">sarcasm:</div>
-            <div><strong>${t.llm_sarcasm ? 'tak' : 'nie'}</strong></div>
-
-            <div class="muted">conf:</div>
-            <div><strong>${t.llm_conf != null ? Number(t.llm_conf).toFixed(2) : '—'}</strong></div>
+            <div class="muted">about TSLA:</div><div><strong>${t.llm_about_tsla ? 'tak' : 'nie'}</strong></div>
+            <div class="muted">sent_tweet:</div><div><strong>${escapeHtml(t.llm_sent_tweet || '')}</strong></div>
+            <div class="muted">sent_quote:</div><div><strong>${escapeHtml(t.llm_sent_quote || '')}</strong></div>
+            <div class="muted">stance:</div><div><strong>${escapeHtml(t.llm_stance || '')}</strong></div>
+            <div class="muted">impact:</div><div><strong>${escapeHtml(t.llm_impact || '')}</strong></div>
+            <div class="muted">sarcasm:</div><div><strong>${t.llm_sarcasm ? 'tak' : 'nie'}</strong></div>
+            <div class="muted">conf:</div><div><strong>${t.llm_conf != null ? Number(t.llm_conf).toFixed(2) : '—'}</strong></div>
           </div>
-
-          <div class="muted" style="font-size:13px;margin-top:6px">
-            drivers: ${escapeHtml(drivers)}
-          </div>
-
+          <div class="muted" style="font-size:13px;margin-top:6px">drivers: ${escapeHtml(drivers)}</div>
           <details style="margin-top:6px;font-size:13px">
             <summary class="muted">Uzasadnienie modelu LLM (rationale)</summary>
             <div style="margin-top:4px;white-space:pre-wrap">${escapeHtml(rationale)}</div>
           </details>
         </div>
-
-        <div style="margin-top:10px;padding:10px;border-radius:14px;background:#f3f4ff;border:1px solid #e0e7ff">
-          <div style="font-weight:600;margin-bottom:4px">FinBERT – kierunek w 3 min</div>
-          <div style="font-size:13px;line-height:1.5">
-            Predykcja modelu: <strong>${predLabel}</strong><br/>
-            Rzeczywisty kierunek (avg1_3): <strong>${trueLabel}</strong><br/>
-            Decyzja tradingowa: <strong>${tradeDecision}</strong><br/>
-            Rzeczywista zmiana po 3 min: <strong>${after3}</strong>
-          </div>
-        </div>
       `;
     }
 
+    // ===== RENDER =====
     detail.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <div style="flex:1;min-width:0">
           <div class="muted" style="font-size:12px">${t.created_display}</div>
           <div style="margin-top:4px">${escapeHtml(t.text || '')}</div>
-          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-            ${tagsHtml}
-          </div>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${tagsHtml}</div>
+
           ${llmHtml}
+          ${modelCardsHtml}
         </div>
         <div class="muted" style="white-space:nowrap">Tweet #${t.tweet_id}</div>
       </div>
@@ -334,11 +360,13 @@ async function openDetail(tweetId){
         <div style="margin-top:10px">
           <button id="btn-show-chart" class="btn" type="button">Pokaż wykres</button>
           <span class="muted" style="font-size:12px;margin-left:6px">Wykres ładowany na żądanie dla tweetów testowych.</span>
-        </div>` : ''}
+        </div>
+      ` : ''}
     `;
 
     state.currentTweetId = tweetId;
 
+    // wykres
     if (isMlTest) {
       const btn = document.getElementById('btn-show-chart');
       if (btn) {
@@ -346,9 +374,7 @@ async function openDetail(tweetId){
           try {
             const payload = await renderChart(t.created_ts, state.windowMinutes, state.preMinutes);
             renderPctList(payload.pct_changes);
-          } catch (e) {
-            console.error(e);
-          }
+          } catch (e) { console.error(e); }
         });
       }
     } else {
@@ -362,6 +388,7 @@ async function openDetail(tweetId){
     Plotly.newPlot('chart', [{x:[new Date()], y:[null]}], {title:'Błąd ładowania danych', margin:{t:40}});
   }
 }
+
 
 // ===== WYKRES CEN =====
 async function renderChart(startUnix, minutes, pre){
@@ -552,6 +579,7 @@ function setupInfiniteScroll(){
 
 // ===== wiring =====
 window.addEventListener('DOMContentLoaded', ()=>{
+  if (!document.getElementById('btn-search')) return;
   const readBasics = ()=>{
     state.year    = document.getElementById('f-year').value || 'all';
     state.q       = (document.getElementById('f-q').value || '').trim();
