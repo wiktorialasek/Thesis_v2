@@ -1,8 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
+
+<style>
+  .trade-row { cursor:pointer; }
+  .trade-row:hover { background:#f8fafc; }
+  .trade-row.active { background:#eef2ff; }
+</style>
+
 <div class="layout">
   <div class="card pane">
-    <h2 style="margin-top:0;margin-bottom:10px;font-size:16px;">Backtest strategii FinBERT</h2>
+    {% set ns = namespace(label=strategy if strategy is defined else 'finbert') %}
+    {% if strategies is defined %}
+      {% for s in strategies %}
+        {% if s.key == (strategy if strategy is defined else 'finbert') %}
+          {% set ns.label = s.label %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    <h2 style="margin-top:0;margin-bottom:10px;font-size:16px;">
+      Backtest strategii {{ ns.label }}
+    </h2>
+
+    <!-- PRZEŁĄCZNIK STRATEGII -->
+    {% if strategies is defined %}
+    <div style="margin:10px 0 12px; display:flex; gap:8px; flex-wrap:wrap">
+      {% for s in strategies %}
+        <a
+          class="btn {{ 'primary' if (strategy is defined and s.key==strategy) else '' }}"
+          href="{{ url_for('backtest_page', strategy=s.key, start=start, end=end, budget=budget) }}"
+          style="font-size:12px;"
+        >
+          {{ s.label }}
+        </a>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div style="margin-bottom:10px;">
       <a href="{{ url_for('index') }}" class="btn" style="font-size:12px;">&larr; Powrót do analizy</a>
@@ -15,18 +48,24 @@
     {% endif %}
 
     <form method="get" action="{{ url_for('backtest_page') }}" style="display:grid;gap:10px;max-width:360px;">
+      <!-- zachowaj strategię po submit -->
+      <input type="hidden" name="strategy" value="{{ strategy if strategy is defined else 'finbert' }}" />
+
       <div>
         <label class="muted" style="font-size:12px;">Data od</label>
         <input type="date" name="start" value="{{ start or '' }}" min="{{ min_date or '' }}" max="{{ max_date or '' }}" />
       </div>
+
       <div>
         <label class="muted" style="font-size:12px;">Data do</label>
         <input type="date" name="end" value="{{ end or '' }}" min="{{ min_date or '' }}" max="{{ max_date or '' }}" />
       </div>
+
       <div>
         <label class="muted" style="font-size:12px;">Budżet początkowy</label>
         <input type="number" step="100" min="0" name="budget" value="{{ budget or 10000 }}" />
       </div>
+
       <div>
         <button class="btn primary" type="submit">Uruchom backtest</button>
       </div>
@@ -37,8 +76,7 @@
         <h3 style="margin-top:0;margin-bottom:8px;font-size:15px;">Podsumowanie</h3>
         <div class="muted" style="font-size:13px;">
           Okres: <strong>{{ summary.start_str }} – {{ summary.end_str }}</strong><br/>
-          Liczba transakcji: <strong>{{ summary.n_trades }}</strong>
-          (buy: {{ summary.n_buy }}, sell: {{ summary.n_sell }})<br/>
+          Liczba transakcji: <strong>{{ summary.n_trades }}</strong> (buy: {{ summary.n_buy }}, sell: {{ summary.n_sell }})<br/>
           Kapitał początkowy: <strong>{{ "%.2f"|format(summary.initial) }}</strong><br/>
           Kapitał końcowy: <strong>{{ "%.2f"|format(summary.final) }}</strong><br/>
           Zwrot: <strong>{{ "%.2f"|format(summary.return_pct) if summary.return_pct is not none else "—" }}%</strong>
@@ -48,7 +86,22 @@
   </div>
 
   <div class="card pane">
+    <!-- WYKRES TRANSAKCJI -->
+    <div class="card" style="padding:10px;margin-bottom:12px;">
+      <div id="bt-chart-title" style="font-weight:600;margin-bottom:6px;">Wykres transakcji</div>
+      <div id="bt-chart-meta" class="muted" style="font-size:12px;margin-bottom:8px;">Kliknij w transakcję w tabeli.</div>
+      <div id="bt-chart" style="height:360px;"></div>
+    </div>
+
+    <script>
+      window.BT_HOLD_MIN = parseInt("{{ hold_min|default(3)|int }}", 10);
+    </script>
+
+
+    <script src="{{ url_for('static', filename='backtest.js') }}?v=2025-12-13" defer></script>
+
     <h3 style="margin-top:0;margin-bottom:8px;font-size:15px;">Transakcje</h3>
+
     {% if trades and trades|length > 0 %}
       <div style="max-height:calc(100vh - 150px);overflow:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -61,10 +114,18 @@
               <th style="padding:6px;border-bottom:1px solid #e5e7eb;text-align:right;">Kapitał →</th>
             </tr>
           </thead>
+
           <tbody>
             {% for t in trades %}
-              <tr>
+              <tr class="trade-row"
+                  data-tweet-id="{{ t.tweet_id }}"
+                  data-entry-ts="{{ t.created_ts }}"
+                  data-exit-ts="{{ t.exit_ts }}"
+                  data-decision="{{ t.decision }}"
+                  data-text="{{ t.text|e }}"
+              >
                 <td style="padding:6px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">{{ t.created_at }}</td>
+
                 <td style="padding:6px;border-bottom:1px solid #f1f5f9;">
                   <div style="font-weight:500;">#{{ t.tweet_id }}</div>
                   <div style="color:#4b5563;">{{ t.text }}</div>
@@ -72,12 +133,15 @@
                     model: {{ t.pred_label or '—' }}, real: {{ t.true_label or '—' }}
                   </div>
                 </td>
+
                 <td style="padding:6px;border-bottom:1px solid #f1f5f9;">
                   {{ t.decision }}
                 </td>
+
                 <td style="padding:6px;border-bottom:1px solid #f1f5f9;text-align:right;">
                   {{ "%.2f"|format(t.raw_ret) }}%
                 </td>
+
                 <td style="padding:6px;border-bottom:1px solid #f1f5f9;text-align:right;">
                   {{ "%.2f"|format(t.capital_before) }} → {{ "%.2f"|format(t.capital_after) }}
                 </td>
@@ -91,4 +155,5 @@
     {% endif %}
   </div>
 </div>
+
 {% endblock %}

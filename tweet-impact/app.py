@@ -11,6 +11,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TWEETS_CSV = os.path.join(BASE_DIR, "data", "all_musk_posts.csv")
 PRICES_DIR = os.path.join(BASE_DIR, "data", "TSLA_sorted")
 PREDICTIONS_CSV = os.path.join(BASE_DIR, "data", "finbert_test_predictions_3m.csv")
+XGBOOST_BACKTEST_CSV = os.path.join(BASE_DIR, "data", "xgboost_backtest_results.csv")
 
 PRE_MINUTE = 8
 PRE_THRESHOLD = 1.0  # %
@@ -147,10 +148,17 @@ def load_predictions(csv_path: str = PREDICTIONS_CSV) -> pd.DataFrame:
     df["tweet_id"] = df["tweet_id"].astype(str)
 
     # created_at_local → UTC, jeśli nie ma kolumny created_at
+    # if "created_at" not in df.columns and "created_at_local" in df.columns:
+    #     dt_local = pd.to_datetime(df["created_at_local"], errors="coerce")
+    #     dt_local = dt_local.dt.tz_localize(DISPLAY_TZ, nonexistent="shift_forward", ambiguous="NaT")
+    #     df["created_at"] = dt_local.dt.tz_convert("UTC")
+        
     if "created_at" not in df.columns and "created_at_local" in df.columns:
-        dt_local = pd.to_datetime(df["created_at_local"], errors="coerce")
+        s = df["created_at_local"].astype(str).str.replace(r"\s+(CET|CEST)$", "", regex=True)
+        dt_local = pd.to_datetime(s, errors="coerce")
         dt_local = dt_local.dt.tz_localize(DISPLAY_TZ, nonexistent="shift_forward", ambiguous="NaT")
         df["created_at"] = dt_local.dt.tz_convert("UTC")
+
 
     # pozbądź się duplikatów tweet_id (na wszelki wypadek)
     df = df.drop_duplicates(subset=["tweet_id"])
@@ -303,6 +311,140 @@ if not TWEETS_DF.empty and not ML_PRED_FULL.empty:
 else:
     if not TWEETS_DF.empty:
         TWEETS_DF["is_ml_test"] = False
+
+BACKTEST_STRATEGIES = {
+    "finbert": {
+        "label": "FinBERT",
+        "csv": PREDICTIONS_CSV,
+        # kolumny (typowo masz je w finbert_test_predictions_3m.csv)
+        "tweet_id": ["tweet_id", "id"],
+        "text": ["text", "tweet_text"],
+        "created_utc": ["created_at"],
+        "created_local": ["created_at_local"],
+        "decision": ["trade_decision", "decision", "signal"],
+        "ret_pct": ["after_3m", "ret_3m", "return_3m"],  # w % (np 0.47 oznacza 0.47%)
+        "pred_label": ["pred_label_str", "pred_label"],
+        "true_label": ["label_str", "true_label"],
+        "hold_min": 3,  # po ilu minutach zamykasz pozycję
+    },
+    "xgboost": {
+        "label": "XGBoost",
+        "csv": XGBOOST_BACKTEST_CSV,
+        # jeżeli w pliku masz inne nazwy kolumn – tu je dopisz
+        "tweet_id": ["tweet_id", "id"],
+        "text": ["text", "tweet_text"],
+        "created_utc": ["created_at"],
+        "created_local": ["created_at_local"],
+        "decision": ["trade_decision", "decision", "signal"],
+        "ret_pct": ["after_3m", "ret_3m", "return_3m"],
+        "pred_label": ["pred_label_str", "pred_label"],
+        "true_label": ["label_str", "true_label"],
+        "hold_min": 3,
+    },
+}
+
+def _pick_first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+def load_backtest_df(strategy_key: str) -> tuple[pd.DataFrame, dict, str | None]:
+    """
+    Zwraca: (df_znormalizowany, cfg, error)
+    """
+    key = strategy_key if strategy_key in BACKTEST_STRATEGIES else "finbert"
+    cfg = BACKTEST_STRATEGIES[key]
+    path = cfg["csv"]
+
+    if not os.path.exists(path):
+        return pd.DataFrame(), cfg, f"Brak pliku strategii: {path}"
+
+    df = pd.read_csv(path, low_memory=False)
+    if df.empty:
+        return pd.DataFrame(), cfg, "Plik strategii jest pusty."
+
+    # tweet_id
+    col_id = _pick_first_col(df, cfg["tweet_id"])
+    if not col_id:
+        return pd.DataFrame(), cfg, "Brak kolumny tweet_id (lub zamiennika) w pliku strategii."
+    df["tweet_id"] = df[col_id].astype(str)
+
+    # text (opcjonalne)
+    col_text = _pick_first_col(df, cfg["text"])
+    if col_text:
+        df["text"] = df[col_text].fillna("").astype(str)
+    else:
+        df["text"] = ""
+
+    # created_at -> UTC (wymagane do wykresu)
+    if _pick_first_col(df, cfg["created_utc"]):
+        col_created = _pick_first_col(df, cfg["created_utc"])
+        # próbujemy potraktować to jako już-UTC albo jako timestamp/string
+        dt = pd.to_datetime(df[col_created], errors="coerce", utc=True)
+        df["created_at"] = dt
+    elif _pick_first_col(df, cfg["created_local"]):
+        col_local = _pick_first_col(df, cfg["created_local"])
+        s = df[col_local].astype(str).str.replace(r"\s+(CET|CEST)$", "", regex=True)
+        dt_local = pd.to_datetime(s, errors="coerce")
+        dt_local = dt_local.dt.tz_localize(DISPLAY_TZ, nonexistent="shift_forward", ambiguous="NaT")
+        df["created_at"] = dt_local.dt.tz_convert("UTC")
+    # elif _pick_first_col(df, cfg["created_local"]):
+    #     col_local = _pick_first_col(df, cfg["created_local"])
+    #     dt_local = pd.to_datetime(df[col_local], errors="coerce")
+    #     dt_local = dt_local.dt.tz_localize(DISPLAY_TZ, nonexistent="shift_forward", ambiguous="NaT")
+    #     df["created_at"] = dt_local.dt.tz_convert("UTC")
+    else:
+        df["created_at"] = pd.NaT
+
+    
+
+    df = df.dropna(subset=["created_at"]).copy()
+    if df.empty:
+        return pd.DataFrame(), cfg, "Brak poprawnych dat (created_at / created_at_local) w pliku strategii."
+
+    # decision + ret
+    col_dec = _pick_first_col(df, cfg["decision"])
+    col_ret = _pick_first_col(df, cfg["ret_pct"])
+    if not col_dec or not col_ret:
+        return pd.DataFrame(), cfg, "Brak wymaganych kolumn: decision i/lub ret_pct (np. trade_decision / after_3m)."
+
+    df["trade_decision"] = df[col_dec].fillna("").astype(str).str.lower()
+    df["after_3m"] = pd.to_numeric(df[col_ret], errors="coerce")
+
+    # labelki (opcjonalnie)
+    col_pred = _pick_first_col(df, cfg["pred_label"])
+    col_true = _pick_first_col(df, cfg["true_label"])
+    df["pred_label_str"] = df[col_pred] if col_pred else None
+    df["label_str"] = df[col_true] if col_true else None
+
+    df = df.sort_values("created_at").drop_duplicates(subset=["tweet_id"])
+    return df, cfg, None
+
+
+# ===== Predykcje XGBoost – merge do TWEETS_DF =====
+XGB_DF, _xgb_cfg, xgb_err = load_backtest_df("xgboost")  # używa XGBOOST_BACKTEST_CSV i mapowań z BACKTEST_STRATEGIES
+
+if xgb_err:
+    print(f"[startup] XGBoost: {xgb_err}")
+
+if not TWEETS_DF.empty:
+    # domyślnie flaga na False, potem nadpiszemy tam gdzie są dane
+    TWEETS_DF["is_xgb_test"] = False
+
+if not TWEETS_DF.empty and XGB_DF is not None and not XGB_DF.empty:
+    # bierzemy tylko to co potrzebne do widoku "Analiza"
+    XGB_FOR_MERGE = XGB_DF[["tweet_id", "pred_label_str", "label_str", "trade_decision", "after_3m"]].copy()
+    XGB_FOR_MERGE = XGB_FOR_MERGE.rename(columns={
+        "pred_label_str": "xgb_pred_label_str",
+        "label_str": "xgb_label_str",
+        "trade_decision": "xgb_trade_decision",
+        "after_3m": "xgb_after_3m",
+    })
+
+    TWEETS_DF = TWEETS_DF.merge(XGB_FOR_MERGE, on="tweet_id", how="left")
+
+    TWEETS_DF["is_xgb_test"] = TWEETS_DF["xgb_pred_label_str"].notna()
 
 
 @app.route("/health")
@@ -557,6 +699,14 @@ def api_tweet(tweet_id):
     created_display = pd.Timestamp(t["created_at"]).tz_convert(DISPLAY_TZ) \
         .strftime("%Y-%m-%d %H:%M:%S %Z")
 
+    def _val(col):
+        if col not in TWEETS_DF.columns:
+            return None
+        v = t[col]
+        if isinstance(v, (float, np.floating)) and pd.isna(v):
+            return None
+        return v
+
     res = {
         "tweet_id": str(t["tweet_id"]),
         "text": t["text"],
@@ -567,19 +717,11 @@ def api_tweet(tweet_id):
         "created_display": created_display,
     }
 
-    # [ML] – dodatkowe informacje dla tweetów z testu modelu
+    # [ML] – FinBERT/LLM
     is_ml_test = bool(t.get("is_ml_test", False)) if isinstance(t, pd.Series) else False
     res["is_ml_test"] = is_ml_test
 
     if is_ml_test:
-        def _val(col):
-            if col not in TWEETS_DF.columns:
-                return None
-            v = t[col]
-            if isinstance(v, (float, np.floating)) and pd.isna(v):
-                return None
-            return v
-
         for col in [
             "combined_quote_info",
             "llm_about_tsla",
@@ -593,14 +735,22 @@ def api_tweet(tweet_id):
             "llm_rationale",
             "avg1_3",
             "after_3m",
-            "label_str",        # prawdziwy kierunek z avg1_3
-            "pred_label_str",   # predykcja modelu
+            "label_str",
+            "pred_label_str",
             "trade_decision",
             "pnl_model",
         ]:
             res[col] = _val(col)
 
+    # [XGB] – XGBoost (UWAGA: poza if is_ml_test)
+    is_xgb_test = bool(t.get("is_xgb_test", False)) if isinstance(t, pd.Series) else False
+    res["is_xgb_test"] = is_xgb_test
+
+    for col in ["xgb_pred_label_str", "xgb_label_str", "xgb_trade_decision", "xgb_after_3m"]:
+        res[col] = _val(col)
+
     return jsonify(res)
+
 
 
 # ---- API: ceny / wykres ----
@@ -719,13 +869,17 @@ def api_price():
     return (body, 200, {"Content-Type": "text/plain; charset=utf-8"})
 
 
+
 # ===== BACKTEST na podstawie finbert_test_predictions_3m.csv =====
 @app.route("/backtest")
 def backtest_page():
-    if ML_PRED_FULL is None or ML_PRED_FULL.empty:
+    strategy = (request.args.get("strategy", "finbert") or "finbert").lower()
+    df, cfg, err = load_backtest_df(strategy)
+
+    if err:
         return render_template(
             "backtest.html",
-            error="Brak pliku z predykcjami (finbert_test_predictions_3m.csv).",
+            error=err,
             trades=[],
             summary=None,
             min_date=None,
@@ -733,32 +887,9 @@ def backtest_page():
             start=None,
             end=None,
             budget=None,
-        )
-
-    df = ML_PRED_FULL.copy()
-
-    # upewnij się, że mamy created_at w UTC
-    if "created_at" not in df.columns:
-        if "created_at_local" in df.columns:
-            dt_local = pd.to_datetime(df["created_at_local"], errors="coerce")
-            dt_local = dt_local.dt.tz_localize(DISPLAY_TZ, nonexistent="shift_forward", ambiguous="NaT")
-            df["created_at"] = dt_local.dt.tz_convert("UTC")
-        else:
-            df["created_at"] = pd.NaT
-
-    df = df.dropna(subset=["created_at"]).sort_values("created_at")
-
-    if df.empty:
-        return render_template(
-            "backtest.html",
-            error="Brak poprawnych dat w pliku predykcji.",
-            trades=[],
-            summary=None,
-            min_date=None,
-            max_date=None,
-            start=None,
-            end=None,
-            budget=None,
+            strategy=strategy,
+            strategies=[{"key": k, "label": v["label"]} for k, v in BACKTEST_STRATEGIES.items()],
+            hold_min=cfg.get("hold_min", 3),
         )
 
     min_dt = df["created_at"].min()
@@ -770,7 +901,6 @@ def backtest_page():
     start_str = request.args.get("start", min_date_str)
     end_str = request.args.get("end", max_date_str)
     budget_str = request.args.get("budget", "10000")
-
     try:
         initial_budget = float(budget_str)
     except Exception:
@@ -788,18 +918,17 @@ def backtest_page():
 
     trades = []
     capital = initial_budget
-    ret_col = "after_3m"
+    hold_min = int(cfg.get("hold_min", 3))
 
     for _, r in df_period.iterrows():
-        decision = str(r.get("trade_decision", "hold") or "hold")
+        decision = str(r.get("trade_decision", "hold") or "hold").lower()
         if decision not in ("buy", "sell"):
             continue
 
-        raw_ret = r.get(ret_col, np.nan)
+        raw_ret = r.get("after_3m", np.nan)
         if pd.isna(raw_ret):
             continue
 
-        # raw_ret jest w %, np. 1.23 => 1.23% => 0.0123
         frac = float(raw_ret) / 100.0
         pnl_frac = frac if decision == "buy" else -frac
 
@@ -807,15 +936,19 @@ def backtest_page():
         capital_after = capital_before * (1.0 + pnl_frac)
         capital = capital_after
 
+        created_ts = int(pd.Timestamp(r["created_at"]).timestamp())
+        exit_ts = created_ts + hold_min * 60
+
         trades.append({
             "tweet_id": str(r.get("tweet_id")),
-            "created_at": r["created_at"].tz_convert(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "created_at": pd.Timestamp(r["created_at"]).tz_convert(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "created_ts": created_ts,
+            "exit_ts": exit_ts,
             "text": (str(r.get("text") or "")[:180]),
             "decision": decision,
             "raw_ret": float(raw_ret),
-            "pnl_frac": pnl_frac,
-            "capital_before": capital_before,
-            "capital_after": capital_after,
+            "capital_before": float(capital_before),
+            "capital_after": float(capital_after),
             "pred_label": r.get("pred_label_str"),
             "true_label": r.get("label_str"),
         })
@@ -831,6 +964,7 @@ def backtest_page():
             "return_pct": (capital / initial_budget - 1.0) * 100.0 if initial_budget > 0 else None,
             "start_str": start_str,
             "end_str": end_str,
+            "strategy_label": cfg.get("label", strategy),
         }
 
     return render_template(
@@ -843,7 +977,11 @@ def backtest_page():
         start=start_str,
         end=end_str,
         budget=initial_budget,
+        strategy=strategy,
+        strategies=[{"key": k, "label": v["label"]} for k, v in BACKTEST_STRATEGIES.items()],
+        hold_min=hold_min,
     )
+
 
 
 if __name__ == "__main__":
